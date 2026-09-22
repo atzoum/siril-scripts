@@ -385,8 +385,16 @@ def prompt_settings(root):
 
     ttk.Label(left, text="Sessions", style="Header.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
 
+    ttk.Label(
+        left,
+        text="Multiple sessions can use the same filter (e.g. two "
+             "Ha-OIII nights) - their red channels merge into one "
+             "combined stack per filter.",
+        style="Note.TLabel", wraplength=220, justify="left"
+    ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 4))
+
     listbox = tk.Listbox(left, width=32, height=10, exportselection=False)
-    listbox.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(2, 4))
+    listbox.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(2, 4))
 
     def describe(index):
         sv = sessions[index]
@@ -420,8 +428,8 @@ def prompt_settings(root):
         sessions.pop(idx)
         refresh_listbox(select_index=min(idx, len(sessions) - 1))
 
-    ttk.Button(left, text="+ Add Session", command=add_session).grid(row=2, column=0, sticky="we")
-    ttk.Button(left, text="− Remove Session", command=remove_session).grid(row=2, column=1, sticky="we")
+    ttk.Button(left, text="+ Add Session", command=add_session).grid(row=3, column=0, sticky="we")
+    ttk.Button(left, text="− Remove Session", command=remove_session).grid(row=3, column=1, sticky="we")
 
     # --------------------------------------------------------
     # Right: editor panel for the currently selected session
