@@ -210,9 +210,9 @@ def resolve_dir(value, root, name):
     return Path(value) if value else (root / name)
 
 
-def slugify(label):
-    """Folder-name-safe version of a session label, e.g. "Ha" -> "ha"."""
-    slug = re.sub(r"[^A-Za-z0-9]+", "", label or "").lower()
+def slugify(filter_type):
+    """Folder-name-safe version of a filter type, e.g. "Ha-OIII" -> "haoiii"."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "", filter_type or "").lower()
     return slug or "session"
 
 
@@ -220,20 +220,21 @@ def sanitize_token(text):
     """
     Collapse whitespace to underscores. Siril's cmd() joins arguments
     with plain spaces (no quoting), so a space in a filename/sequence
-    name would break commands like "save".
+    name would break commands like "save". Returns "" if nothing is
+    left once sanitized.
     """
     text = re.sub(r"\s+", "_", (text or "").strip())
     text = re.sub(r"_+", "_", text)
-    return text or "session"
+    return text
 
 
-def default_session_dirs(root, label, overrides):
+def default_session_dirs(root, filter_type, overrides):
     """
     Resolve a session's 4 folder settings against their
-    "<kind>_<slug(label)>" defaults under root, e.g. label="Ha" ->
-    lights_ha, darks_ha, flats_ha, biases_ha.
+    "<kind>_<slug(filter_type)>" defaults under root, e.g.
+    filter_type="Ha-OIII" -> lights_haoiii, darks_haoiii, ...
     """
-    slug = slugify(label)
+    slug = slugify(filter_type)
     return (
         resolve_dir(overrides.get("lights"), root, f"lights_{slug}"),
         resolve_dir(overrides.get("darks"), root, f"darks_{slug}"),
@@ -312,10 +313,9 @@ def derive_base_name_from_files(files):
     if cut > 0:
         common = common[:cut]
 
-    common = common.strip("_- ")
-    common = sanitize_token(common)
+    common = sanitize_token(common.strip("_- "))
 
-    if not common or common == "session":
+    if not common:
         common = "narrowband"
 
     suffix = build_exposure_suffix(stems, count)
@@ -464,10 +464,10 @@ def prompt_settings(root):
     def browse_into(var):
         # Only start from the field's current value if it's a real,
         # existing folder (it's usually still a not-yet-created
-        # default like ".../lights_ha") - otherwise start from
+        # default like ".../lights_haoiii") - otherwise start from
         # Siril's working directory (its "home").
-        current = var.get()
-        start = current if current and Path(current).is_dir() else str(root)
+        existing = var.get()
+        start = existing if existing and Path(existing).is_dir() else str(root)
         path = filedialog.askdirectory(initialdir=start)
         if path:
             var.set(path)
@@ -875,19 +875,25 @@ def main():
                 siril.cmd("convert", kind, f"-out={session_process}")
                 cd(session_process)
 
-            # ---- BIAS ----
-
-            if has_biases:
-                log(f"[{label}] Creating master bias...")
-                convert_frames("bias", biases_dir)
+            def build_simple_master(kind, has_frames, frames_dir):
+                # Shared by BIAS and DARKS, which are identical apart
+                # from the frame kind - FLATS additionally needs the
+                # bias-calibration branch below, so it stays separate.
+                if not has_frames:
+                    log(f"[{label}] No {kind}s found -> skipping master {kind}.")
+                    return
+                log(f"[{label}] Creating master {kind}...")
+                convert_frames(kind, frames_dir)
                 siril.cmd(
-                    "stack", "bias",
+                    "stack", kind,
                     "rej", "3", "3",
                     "-nonorm", "-32b",
-                    f"-out={session_masters / 'bias_stacked'}"
+                    f"-out={session_masters / f'{kind}_stacked'}"
                 )
-            else:
-                log(f"[{label}] No biases found -> skipping master bias.")
+
+            # ---- BIAS ----
+
+            build_simple_master("bias", has_biases, biases_dir)
 
             # ---- FLATS ----
 
@@ -923,17 +929,7 @@ def main():
 
             # ---- DARKS ----
 
-            if has_darks:
-                log(f"[{label}] Creating master dark...")
-                convert_frames("dark", darks_dir)
-                siril.cmd(
-                    "stack", "dark",
-                    "rej", "3", "3",
-                    "-nonorm", "-32b",
-                    f"-out={session_masters / 'dark_stacked'}"
-                )
-            else:
-                log(f"[{label}] No darks found -> skipping dark correction.")
+            build_simple_master("dark", has_darks, darks_dir)
 
             # ---- LIGHTS: convert + calibrate ----
 
@@ -1003,8 +999,6 @@ def main():
             oiii_sequence = f"OIII_{light_sequence}"
 
             return {
-                "key": key,
-                "label": label,
                 "light_files": list_light_files(lights_dir),
                 "process_dir": session_process,
                 "red_sequence": red_sequence,
@@ -1020,33 +1014,30 @@ def main():
             results_by_key[session["key"]] = process_session(session)
 
         # ----------------------------------------------------
-        # Group sessions by label (case-insensitive): every group's
-        # red-channel frames (across all its member sessions) are
-        # merged into one sequence and registered/drizzled/stacked
-        # once, giving one combined red-channel master per unique
-        # label instead of one per session.
+        # Group sessions by their red-channel label ("Ha"/"SII",
+        # always exactly one of those two - see FILTER_TO_CHANNEL):
+        # every group's red-channel frames (across all its member
+        # sessions) are merged into one sequence and registered/
+        # drizzled/stacked once, giving one combined red-channel
+        # master per label instead of one per session.
         # ----------------------------------------------------
 
         groups = {}
 
         for session in sessions:
-            lower = session["label"].lower()
-            if lower not in groups:
-                groups[lower] = {"label": session["label"], "keys": []}
-            groups[lower]["keys"].append(session["key"])
+            groups.setdefault(session["label"], []).append(session["key"])
 
         channel_results = {}
 
-        for lower_label, group in groups.items():
+        for label, keys in groups.items():
 
-            label = group["label"]
-            member_infos = [results_by_key[k] for k in group["keys"]]
+            member_infos = [results_by_key[k] for k in keys]
 
             log("------------------------------------------")
             log(f"Building combined {label} stack ({len(member_infos)} session(s))")
             log("------------------------------------------")
 
-            red_dir = process / f"red_{lower_label or 'session'}"
+            red_dir = process / f"red_{slugify(label)}"
             sources = [(info["process_dir"], info["red_sequence"]) for info in member_infos]
             count = merge_sequence_files(sources, red_dir, "red_all")
             log(f"Combined {label} frame count: {count}")
@@ -1089,8 +1080,7 @@ def main():
             for info in member_infos:
                 light_files_all.extend(info["light_files"])
 
-            channel_results[lower_label] = {
-                "label": label,
+            channel_results[label] = {
                 "light_files": light_files_all,
                 "red_final_path": red_dir / "red_final.fit",
             }
@@ -1158,9 +1148,9 @@ def main():
         channel_indices = {}
         idx = 0
 
-        for lower_label, info in channel_results.items():
+        for label, info in channel_results.items():
             idx += 1
-            channel_indices[lower_label] = idx
+            channel_indices[label] = idx
             shutil.move(
                 str(info["red_final_path"]),
                 str(final_dir / f"final_{idx:05d}.fit")
@@ -1191,13 +1181,12 @@ def main():
         # untouched on every channel, including the reference, so no
         # channel's noise gets amplified by this step - it only
         # gives every channel the same black point for a clean
-        # composite. Reference = the group labeled "Ha"
-        # (case-insensitive) if any, else the first group.
+        # composite. Reference = "Ha" if present, else the first
+        # channel.
         # ----------------------------------------------------
 
-        reference_key = "ha" if "ha" in channel_results else next(iter(channel_results))
-        reference_label = channel_results[reference_key]["label"]
-        reference_idx = channel_indices[reference_key]
+        reference_label = "Ha" if "Ha" in channel_results else next(iter(channel_results))
+        reference_idx = channel_indices[reference_label]
 
         def median_match_expression(source_idx):
             return (
@@ -1221,13 +1210,13 @@ def main():
         oiii_name = f"{derive_base_name_from_files(oiii_light_files_all)}_OIII_x{scale_tag}"
         save_channel(oiii_idx, is_reference=False, out_path=results / oiii_name)
 
-        output_names = {"oiii": oiii_name}
+        output_names = {"OIII": oiii_name}
 
-        for lower_label, idx in channel_indices.items():
-            info = channel_results[lower_label]
-            name = f"{derive_base_name_from_files(info['light_files'])}_{info['label']}_x{scale_tag}"
-            output_names[lower_label] = name
-            save_channel(idx, is_reference=(lower_label == reference_key), out_path=results / name)
+        for label, idx in channel_indices.items():
+            info = channel_results[label]
+            name = f"{derive_base_name_from_files(info['light_files'])}_{label}_x{scale_tag}"
+            output_names[label] = name
+            save_channel(idx, is_reference=(label == reference_label), out_path=results / name)
 
         # ====================================================
         # DONE
