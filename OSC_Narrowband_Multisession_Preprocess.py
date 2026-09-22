@@ -158,17 +158,18 @@ STACK_WEIGHT = None
 # is saved exactly as stacked, with no background matching at all.
 MATCH_BACKGROUNDS = True
 
-# One entry per session. "label" must be "Ha" or "SII" (matches the
-# filter type: Ha-OIII or SII-OIII), and names the session's red
-# channel in the output filename (and, if the folder fields below
-# are left as None, its default folder names - see INPUT FOLDERS
-# above). Add or remove entries freely; a session with no light
-# frames is skipped. Two sessions with the same label (e.g. two
-# "Ha" sessions from different nights) have their red channels
-# merged into one combined stack, same as OIII always does.
+# One entry per session. "filter" must be "Ha-OIII" or "SII-OIII" -
+# the dual-band filter this session was shot with. It sets the
+# session's default folder names (see INPUT FOLDERS above) and, via
+# its red channel ("Ha" for a Ha-OIII filter, "SII" for SII-OIII),
+# the session's output filename. Add or remove entries freely; a
+# session with no light frames is skipped. Two sessions with the
+# same filter (e.g. two Ha-OIII sessions from different nights) have
+# their red channels merged into one combined stack, same as OIII
+# always does across every session regardless of filter.
 SESSIONS = [
-    {"label": "Ha", "lights": None, "darks": None, "flats": None, "biases": None},
-    {"label": "SII", "lights": None, "darks": None, "flats": None, "biases": None},
+    {"filter": "Ha-OIII", "lights": None, "darks": None, "flats": None, "biases": None},
+    {"filter": "SII-OIII", "lights": None, "darks": None, "flats": None, "biases": None},
 ]
 
 # ============================================================
@@ -195,6 +196,12 @@ WEIGHT_LABEL_TO_VALUE = {label: value for value, label in STACK_WEIGHT_LABELS.it
 # delimiter or start-of-string right before the digits so it doesn't
 # match unrelated numbers (e.g. "Bin1", "mk127").
 EXPOSURE_RE = re.compile(r"(?:^|[_\-])(\d+(?:\.\d+)?)s", re.IGNORECASE)
+
+# A session's "filter" is the actual dual-band filter it was shot
+# with (shown in the UI and used for default folder names); its red
+# channel is the shorter name used for output filenames/grouping.
+FILTER_TYPES = ("Ha-OIII", "SII-OIII")
+FILTER_TO_CHANNEL = {"Ha-OIII": "Ha", "SII-OIII": "SII"}
 
 
 def resolve_dir(value, root, name):
@@ -319,7 +326,7 @@ def prompt_settings(root):
     from tkinter import ttk, filedialog, messagebox
 
     win = tk.Tk()
-    win.title("Narrowband Preprocess (multi-session)")
+    win.title("OSC Narrowband Preprocess (multi-session)")
 
     style = ttk.Style()
     style.configure("Header.TLabel", font=("TkDefaultFont", 9, "bold"))
@@ -349,9 +356,9 @@ def prompt_settings(root):
     def cur():
         return sessions[current["index"]]
 
-    def make_session_vars(label, lights_d, darks_d, flats_d, biases_d):
+    def make_session_vars(filter_type, lights_d, darks_d, flats_d, biases_d):
         return {
-            "label_var": tk.StringVar(value=label),
+            "filter_var": tk.StringVar(value=filter_type),
             "lights_var": tk.StringVar(value=str(lights_d)),
             "darks_var": tk.StringVar(value=str(darks_d)),
             "darks_enabled": tk.BooleanVar(value=has_files(darks_d)),
@@ -362,12 +369,12 @@ def prompt_settings(root):
         }
 
     for entry in SESSIONS:
-        label = entry.get("label") or f"Session {len(sessions) + 1}"
-        dirs = default_session_dirs(root, label, entry)
-        sessions.append(make_session_vars(label, *dirs))
+        filter_type = entry.get("filter") or FILTER_TYPES[0]
+        dirs = default_session_dirs(root, filter_type, entry)
+        sessions.append(make_session_vars(filter_type, *dirs))
 
     if not sessions:
-        sessions.append(make_session_vars("Ha", *default_session_dirs(root, "Ha", {})))
+        sessions.append(make_session_vars(FILTER_TYPES[0], *default_session_dirs(root, FILTER_TYPES[0], {})))
 
     # --------------------------------------------------------
     # Left: session list + add/remove
@@ -383,10 +390,10 @@ def prompt_settings(root):
 
     def describe(index):
         sv = sessions[index]
-        label = sv["label_var"].get() or f"Session {index + 1}"
+        filter_type = sv["filter_var"].get() or FILTER_TYPES[0]
         lights_text = sv["lights_var"].get()
         n = len(list_light_files(Path(lights_text))) if lights_text else 0
-        return f"{index + 1}: {label} ({n} lights)"
+        return f"{index + 1}: {filter_type} ({n} lights)"
 
     def refresh_listbox(select_index=None):
         listbox.delete(0, "end")
@@ -399,9 +406,9 @@ def prompt_settings(root):
         select_session(target)
 
     def add_session():
-        label = "Ha"
-        sv = make_session_vars(label, *default_session_dirs(root, label, {}))
-        sv["label_var"].trace_add("write", on_label_change)
+        filter_type = FILTER_TYPES[0]
+        sv = make_session_vars(filter_type, *default_session_dirs(root, filter_type, {}))
+        sv["filter_var"].trace_add("write", on_label_change)
         sessions.append(sv)
         refresh_listbox(select_index=len(sessions) - 1)
 
@@ -429,17 +436,13 @@ def prompt_settings(root):
     erow = 0
 
     ttk.Label(editor, text="Filter type:").grid(row=erow, column=0, sticky="w")
-    label_combo = ttk.Combobox(editor, values=["Ha", "SII"], width=17, state="readonly")
-    label_combo.grid(row=erow, column=1, sticky="w")
+    filter_combo = ttk.Combobox(editor, values=list(FILTER_TYPES), width=17, state="readonly")
+    filter_combo.grid(row=erow, column=1, sticky="w")
     erow += 1
 
     ttk.Label(
         editor,
-        text="Ha-OIII or SII-OIII filter used for this session. Sets its "
-             "red-channel output name and its default folders "
-             "(lights_ha/lights_sii, darks_ha/darks_sii, ...). Sessions "
-             "sharing the same filter type get their red channel merged "
-             "into one combined stack.",
+        text="Dual-band filter used for this session.",
         style="Note.TLabel", wraplength=340, justify="left"
     ).grid(row=erow, column=0, columnspan=3, sticky="w", pady=(0, 8))
     erow += 1
@@ -499,7 +502,7 @@ def prompt_settings(root):
         current["index"] = index
         sv = sessions[index]
 
-        label_combo.configure(textvariable=sv["label_var"])
+        filter_combo.configure(textvariable=sv["filter_var"])
         lights_entry.configure(textvariable=sv["lights_var"])
         darks_entry.configure(textvariable=sv["darks_var"])
         darks_cb.configure(variable=sv["darks_enabled"])
@@ -526,10 +529,10 @@ def prompt_settings(root):
 
     refresh_listbox(select_index=0)
 
-    # Re-describe the listbox row when the label text changes, so it
+    # Re-describe the listbox row when the filter type changes, so it
     # doesn't go stale while editing.
     for sv in sessions:
-        sv["label_var"].trace_add("write", on_label_change)
+        sv["filter_var"].trace_add("write", on_label_change)
 
     # --------------------------------------------------------
     # Shared options
@@ -613,12 +616,12 @@ def prompt_settings(root):
 
         resolved = []
         for sv in sessions:
-            label = sv["label_var"].get().strip() or "Session"
+            filter_type = sv["filter_var"].get().strip() or FILTER_TYPES[0]
             lights_text = sv["lights_var"].get().strip()
             lights = Path(lights_text) if lights_text else None
             if lights is not None and has_files(lights):
                 resolved.append({
-                    "label": label,
+                    "filter": filter_type,
                     "lights": lights,
                     "darks": Path(sv["darks_var"].get().strip()) if sv["darks_enabled"].get() and sv["darks_var"].get().strip() else None,
                     "flats": Path(sv["flats_var"].get().strip()) if sv["flats_enabled"].get() and sv["flats_var"].get().strip() else None,
@@ -703,14 +706,18 @@ def main():
 
             session_settings = []
             for entry in SESSIONS:
-                label = entry.get("label") or f"Session {len(session_settings) + 1}"
-                if label.strip().lower() not in ("ha", "sii"):
+                filter_type = entry.get("filter")
+                matched = next(
+                    (f for f in FILTER_TYPES if f.lower() == (filter_type or "").strip().lower()),
+                    None
+                )
+                if matched is None:
                     raise ValueError(
-                        f'SESSIONS label {label!r} must be "Ha" or "SII"'
+                        f'SESSIONS filter {filter_type!r} must be one of {FILTER_TYPES}'
                     )
-                lights_dir, darks_dir, flats_dir, biases_dir = default_session_dirs(root, label, entry)
+                lights_dir, darks_dir, flats_dir, biases_dir = default_session_dirs(root, matched, entry)
                 session_settings.append({
-                    "label": label,
+                    "filter": matched,
                     "lights": lights_dir,
                     "darks": darks_dir,
                     "flats": flats_dir,
@@ -753,8 +760,9 @@ def main():
 
         # ----------------------------------------------------
         # Which sessions are active? Build a unique key per session
-        # (index + label slug, so two sessions sharing a label don't
-        # collide on disk).
+        # (index + filter slug, so two sessions sharing a filter
+        # don't collide on disk), and derive each session's red
+        # channel identity ("Ha"/"SII") from its filter type.
         # ----------------------------------------------------
 
         sessions = []
@@ -762,8 +770,8 @@ def main():
         for i, entry in enumerate(session_settings):
             if has_files(entry["lights"]):
                 sessions.append({
-                    "key": f"{i}_{slugify(entry['label'])}",
-                    "label": sanitize_token(entry["label"]),
+                    "key": f"{i}_{slugify(entry['filter'])}",
+                    "label": FILTER_TO_CHANNEL[entry["filter"]],
                     "lights": entry["lights"],
                     "darks": entry["darks"],
                     "flats": entry["flats"],

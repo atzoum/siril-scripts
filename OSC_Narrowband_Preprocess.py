@@ -306,7 +306,7 @@ def prompt_settings(root):
     from tkinter import ttk, filedialog, messagebox
 
     win = tk.Tk()
-    win.title("Narrowband Preprocess")
+    win.title("OSC Narrowband Preprocess")
 
     scale_var = tk.StringVar(value=f"{SCALE:g}")
     pixfrac_var = tk.StringVar(value=f"{PIXFRAC:g}")
