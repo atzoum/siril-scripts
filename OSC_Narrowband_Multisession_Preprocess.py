@@ -4,12 +4,14 @@
 #
 # OSC dual-band narrowband preprocessing with an arbitrary number of
 # sessions (not just a fixed Ha-OIII / SII-OIII pair - add as many
-# sessions as you have, each labeled with its own red-channel line,
-# e.g. "Ha", "SII", or a custom name). Every session's OIII gets
-# merged into ONE combined sequence and stacked once (deeper/better
-# SNR than any single session's OIII alone); every session's red
-# channel is stacked on its own. All resulting channels (N red +
-# 1 combined OIII) are then aligned together on a shared pixel grid.
+# sessions as you have). Each session is tagged "Ha" or "SII" (which
+# filter it was shot with) - no custom/free-text labels. Sessions
+# sharing the same tag have their red channel merged into ONE
+# combined stack (e.g. two "Ha" sessions from different nights ->
+# one deeper Ha master), exactly like every session's OIII always
+# merges into ONE combined stack regardless of tag. All resulting
+# channels (one per unique tag + 1 combined OIII) are then aligned
+# together on a shared pixel grid.
 #
 # Session concept and UI approach adapted from Naztronomy's OSC
 # preprocessing script (https://github.com/naztronaut/siril-scripts),
@@ -19,9 +21,9 @@
 # Siril's seqextract_HaOIII always splits Bayer CFA data into a
 # "red channel" sequence and a "green+blue channel" sequence and
 # always names them Ha_*/OIII_* internally, regardless of which real
-# narrowband line the red channel represents - a session's "label"
-# below only controls how ITS output file is named (and its default
-# folder names); the extraction itself is identical for every session.
+# narrowband line the red channel represents - a session's "Ha"/"SII"
+# tag below only controls how ITS output file is named (and its
+# default folder names); the extraction itself is identical either way.
 #
 # Can be run two ways:
 #
@@ -35,40 +37,44 @@
 # working dir unless a session's lights/darks/flats/biases override
 # is set):
 #
-#   lights_<label>/    REQUIRED (per session; skip a session with an
-#                       empty/missing lights folder)
-#   darks_<label>/     optional
-#   flats_<label>/     optional
-#   biases_<label>/    optional
+#   lights_ha/ or lights_sii/    REQUIRED (per session; skip a
+#                                session with an empty/missing
+#                                lights folder)
+#   darks_ha/ or darks_sii/      optional
+#   flats_ha/ or flats_sii/      optional
+#   biases_ha/ or biases_sii/    optional
 #
-# where <label> is the session's label, lowercased and stripped to
-# letters/digits only (e.g. label "Ha" -> lights_ha).
+# (folder suffix = the session's tag, lowercased)
 #
 # OUTPUT:
 #
-# Saved directly into Siril's current working folder. Each session's
-# red channel gets its own name built from ITS light frames (common
-# filename prefix, kept whole through a shared date even though
-# per-frame time differs, plus "<n>x<exposure>s" or "<n>f"); the
-# combined OIII's name is built the same way from EVERY session's
-# light frames put together:
+# Saved directly into Siril's current working folder. Each unique
+# tag's combined red channel gets its own name built from ALL its
+# member sessions' light frames put together (common filename
+# prefix, kept whole through a shared date even though per-frame
+# time differs, plus "<n>x<exposure>s" or "<n>f"); the combined
+# OIII's name is built the same way from EVERY session's light
+# frames put together:
 #
-#   <session lights prefix>_<label>_x<scale>.fit   (one per session)
-#   <combined lights prefix>_OIII_x<scale>.fit      (from ALL sessions)
+#   <lights prefix>_Ha_x<scale>.fit    (if any "Ha" session given)
+#   <lights prefix>_SII_x<scale>.fit   (if any "SII" session given)
+#   <lights prefix>_OIII_x<scale>.fit  (from ALL sessions' OIII)
 #
 #
 # NORMALIZATION
 # -------------
 #
-# Every non-reference channel gets its background level (median)
-# shifted to match the reference channel's median, via PixelMath.
-# The reference is the first session labeled "Ha" (case-insensitive)
-# if any, otherwise the first session in the list. Contrast/noise
-# (MAD) is left untouched on every channel - this only gives every
-# channel the same black point for a clean composite, without
-# amplifying a fainter channel's noise the way matching contrast/
-# scale would. It is not a scientific calibration. The reference
-# channel itself is saved as-is, un-normalized.
+# If MATCH_BACKGROUNDS is True (the default), every non-reference
+# channel gets its background level (median) shifted to match the
+# reference channel's median, via PixelMath. The reference is "Ha"
+# if any Ha session was given, otherwise "SII". Contrast/noise (MAD)
+# is left untouched on every channel - this only gives every channel
+# the same black point for a clean composite, without amplifying a
+# fainter channel's noise the way matching contrast/scale would. It
+# is not a scientific calibration. The reference channel itself is
+# always saved as-is, un-normalized. If MATCH_BACKGROUNDS is False,
+# every channel (including OIII) is saved exactly as stacked, with
+# no background matching at all.
 #
 #
 # SCALE behaviour
@@ -146,10 +152,20 @@ CLEANUP_PREVIOUS = True
 # (equal weight per frame).
 STACK_WEIGHT = None
 
-# One entry per session. "label" names the session's red channel in
-# the output filename (and, if the folder fields below are left as
-# None, its default folder names - see INPUT FOLDERS above). Add or
-# remove entries freely; a session with no light frames is skipped.
+# If True, every non-reference channel's background (median) is
+# shifted to match the reference channel's - see NORMALIZATION in
+# the header comment above. If False, every channel (including OIII)
+# is saved exactly as stacked, with no background matching at all.
+MATCH_BACKGROUNDS = True
+
+# One entry per session. "label" must be "Ha" or "SII" (matches the
+# filter type: Ha-OIII or SII-OIII), and names the session's red
+# channel in the output filename (and, if the folder fields below
+# are left as None, its default folder names - see INPUT FOLDERS
+# above). Add or remove entries freely; a session with no light
+# frames is skipped. Two sessions with the same label (e.g. two
+# "Ha" sessions from different nights) have their red channels
+# merged into one combined stack, same as OIII always does.
 SESSIONS = [
     {"label": "Ha", "lights": None, "darks": None, "flats": None, "biases": None},
     {"label": "SII", "lights": None, "darks": None, "flats": None, "biases": None},
@@ -315,6 +331,7 @@ def prompt_settings(root):
     scale_var = tk.StringVar(value=f"{SCALE:g}")
     pixfrac_var = tk.StringVar(value=f"{PIXFRAC:g}")
     cleanup_var = tk.BooleanVar(value=CLEANUP_PREVIOUS)
+    match_backgrounds_var = tk.BooleanVar(value=MATCH_BACKGROUNDS)
     weight_var = tk.StringVar(value=STACK_WEIGHT_LABELS[STACK_WEIGHT])
 
     # --------------------------------------------------------
@@ -382,9 +399,10 @@ def prompt_settings(root):
         select_session(target)
 
     def add_session():
-        n = len(sessions) + 1
-        label = f"Session {n}"
-        sessions.append(make_session_vars(label, *default_session_dirs(root, label, {})))
+        label = "Ha"
+        sv = make_session_vars(label, *default_session_dirs(root, label, {}))
+        sv["label_var"].trace_add("write", on_label_change)
+        sessions.append(sv)
         refresh_listbox(select_index=len(sessions) - 1)
 
     def remove_session():
@@ -410,17 +428,18 @@ def prompt_settings(root):
 
     erow = 0
 
-    ttk.Label(editor, text="Channel label:").grid(row=erow, column=0, sticky="w")
-    label_entry = ttk.Entry(editor, width=20)
-    label_entry.grid(row=erow, column=1, sticky="w")
+    ttk.Label(editor, text="Filter type:").grid(row=erow, column=0, sticky="w")
+    label_combo = ttk.Combobox(editor, values=["Ha", "SII"], width=17, state="readonly")
+    label_combo.grid(row=erow, column=1, sticky="w")
     erow += 1
 
     ttk.Label(
         editor,
-        text='Names this session\'s red-channel output and its default '
-             'folders (lights_<label>, darks_<label>, ...). Use "Ha" for '
-             'a Ha-OIII filter, "SII" for SII-OIII, or anything else for '
-             "a custom line.",
+        text="Ha-OIII or SII-OIII filter used for this session. Sets its "
+             "red-channel output name and its default folders "
+             "(lights_ha/lights_sii, darks_ha/darks_sii, ...). Sessions "
+             "sharing the same filter type get their red channel merged "
+             "into one combined stack.",
         style="Note.TLabel", wraplength=340, justify="left"
     ).grid(row=erow, column=0, columnspan=3, sticky="w", pady=(0, 8))
     erow += 1
@@ -474,7 +493,7 @@ def prompt_settings(root):
         current["index"] = index
         sv = sessions[index]
 
-        label_entry.configure(textvariable=sv["label_var"])
+        label_combo.configure(textvariable=sv["label_var"])
         lights_entry.configure(textvariable=sv["lights_var"])
         darks_entry.configure(textvariable=sv["darks_var"])
         darks_cb.configure(variable=sv["darks_enabled"])
@@ -539,8 +558,25 @@ def prompt_settings(root):
     ).grid(row=4, column=1, columnspan=2, sticky="we", pady=4)
 
     ttk.Checkbutton(
+        opts, text="Match backgrounds (median-only normalization)",
+        variable=match_backgrounds_var
+    ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+    ttk.Label(
+        opts,
+        text="When on, every other channel's background level (median) "
+             "is shifted to match the reference channel's (\"Ha\" if you "
+             "have one, else \"SII\") - just a black-point match via "
+             "PixelMath, not a scale/contrast match, so it won't amplify "
+             "a fainter channel's noise. The reference channel itself is "
+             "never touched. When off, every channel (including OIII) is "
+             "saved exactly as stacked, with no adjustment between them.",
+        style="Note.TLabel", wraplength=420, justify="left"
+    ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(0, 4))
+
+    ttk.Checkbutton(
         opts, text="Clean up previous run's intermediate files", variable=cleanup_var
-    ).grid(row=5, column=0, columnspan=3, sticky="w", pady=4)
+    ).grid(row=7, column=0, columnspan=3, sticky="w", pady=4)
 
     # --------------------------------------------------------
     # Run / Cancel
@@ -595,6 +631,7 @@ def prompt_settings(root):
             scale=scale_val,
             pixfrac=pixfrac_val,
             cleanup=cleanup_var.get(),
+            match_backgrounds=match_backgrounds_var.get(),
             weight=WEIGHT_LABEL_TO_VALUE[weight_var.get()],
             sessions=resolved,
         )
@@ -646,6 +683,7 @@ def main():
             scale = settings["scale"]
             pixfrac = settings["pixfrac"]
             cleanup_previous = settings["cleanup"]
+            match_backgrounds = settings["match_backgrounds"]
             stack_weight = settings["weight"]
             session_settings = settings["sessions"]
 
@@ -654,11 +692,16 @@ def main():
             scale = SCALE
             pixfrac = PIXFRAC
             cleanup_previous = CLEANUP_PREVIOUS
+            match_backgrounds = MATCH_BACKGROUNDS
             stack_weight = STACK_WEIGHT
 
             session_settings = []
             for entry in SESSIONS:
                 label = entry.get("label") or f"Session {len(session_settings) + 1}"
+                if label.strip().lower() not in ("ha", "sii"):
+                    raise ValueError(
+                        f'SESSIONS label {label!r} must be "Ha" or "SII"'
+                    )
                 lights_dir, darks_dir, flats_dir, biases_dir = default_session_dirs(root, label, entry)
                 session_settings.append({
                     "label": label,
@@ -758,11 +801,29 @@ def main():
         process.mkdir(exist_ok=True)
         masters.mkdir(exist_ok=True)
 
+        def merge_sequence_files(sources, dest_dir, dest_prefix):
+            """
+            Move every file matching "<sequence_prefix>_*.fit" from
+            each (process_dir, sequence_prefix) source into dest_dir,
+            renumbered sequentially as "<dest_prefix>_NNNNN.fit".
+            Returns the number of frames moved.
+            """
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            idx = 0
+            for src_dir, sequence_prefix in sources:
+                for f in sorted(src_dir.glob(f"{sequence_prefix}_*.fit")):
+                    idx += 1
+                    shutil.move(str(f), str(dest_dir / f"{dest_prefix}_{idx:05d}.fit"))
+            return idx
+
         # ----------------------------------------------------
-        # Per-session processing: calibrate + convert lights,
-        # extract red channel + OIII, register/drizzle/stack the
-        # red channel. OIII extraction is left un-stacked here - it
-        # gets merged across sessions and stacked once, below.
+        # Per-session processing: calibrate + convert lights, extract
+        # red channel + OIII. Registration/drizzle/stacking happens
+        # afterward, grouped by label (see below) - sessions sharing
+        # a label (e.g. two "Ha" sessions shot on different nights)
+        # get their red channel merged into ONE combined stack, the
+        # same way OIII always merges across every session regardless
+        # of label.
         # ----------------------------------------------------
 
         def process_session(session):
@@ -915,24 +976,71 @@ def main():
             red_sequence = f"Ha_{light_sequence}"
             oiii_sequence = f"OIII_{light_sequence}"
 
-            # ---- RED CHANNEL: register + true 2x drizzle + stack ----
+            return {
+                "key": key,
+                "label": label,
+                "light_files": list_light_files(lights_dir),
+                "process_dir": session_process,
+                "red_sequence": red_sequence,
+                "oiii_sequence": oiii_sequence,
+            }
 
-            log(f"[{label}] Calculating {label} registration...")
-            siril.cmd("register", red_sequence, "-2pass")
+        results_by_key = {}
 
-            log(f"[{label}] Applying true 2x drizzle to {label}...")
+        for session in sessions:
+            log("------------------------------------------")
+            log(f"Processing {session['label']} session")
+            log("------------------------------------------")
+            results_by_key[session["key"]] = process_session(session)
+
+        # ----------------------------------------------------
+        # Group sessions by label (case-insensitive): every group's
+        # red-channel frames (across all its member sessions) are
+        # merged into one sequence and registered/drizzled/stacked
+        # once, giving one combined red-channel master per unique
+        # label instead of one per session.
+        # ----------------------------------------------------
+
+        groups = {}
+
+        for session in sessions:
+            lower = session["label"].lower()
+            if lower not in groups:
+                groups[lower] = {"label": session["label"], "keys": []}
+            groups[lower]["keys"].append(session["key"])
+
+        channel_results = {}
+
+        for lower_label, group in groups.items():
+
+            label = group["label"]
+            member_infos = [results_by_key[k] for k in group["keys"]]
+
+            log("------------------------------------------")
+            log(f"Building combined {label} stack ({len(member_infos)} session(s))")
+            log("------------------------------------------")
+
+            red_dir = process / f"red_{lower_label or 'session'}"
+            sources = [(info["process_dir"], info["red_sequence"]) for info in member_infos]
+            count = merge_sequence_files(sources, red_dir, "red_all")
+            log(f"Combined {label} frame count: {count}")
+
+            cd(red_dir)
+
+            log(f"Calculating {label} registration...")
+            siril.cmd("register", "red_all", "-2pass")
+
+            log(f"Applying true 2x drizzle to {label}...")
             siril.cmd(
-                "seqapplyreg", red_sequence,
+                "seqapplyreg", "red_all",
                 "-scale=2", "-drizzle",
                 f"-pixfrac={pixfrac}", f"-kernel={KERNEL}",
                 "-framing=min"
             )
 
-            registered_red = f"r_{red_sequence}"
-
-            log(f"[{label}] Stacking {label}...")
+            log(f"Stacking {label}...")
             siril.cmd(
-                "stack", registered_red,
+                "stack", "r_red_all",
                 "rej", "3", "3",
                 "-norm=addscale",
                 *stack_weight_args,
@@ -944,29 +1052,22 @@ def main():
             siril.cmd("load", "red_native")
 
             if scale_is_one:
-                log(f"[{label}] SCALE = 1 -> {label} already at final resolution.")
+                log(f"SCALE = 1 -> {label} already at final resolution.")
             else:
-                log(f"[{label}] SCALE = {scale:g} -> Lanczos resampling {label} to final resolution.")
+                log(f"SCALE = {scale:g} -> Lanczos resampling {label} to final resolution.")
                 siril.cmd("resample", f"{scale:g}", "-interp=lanczos4")
 
             siril.cmd("save", "red_final")
 
-            return {
-                "key": key,
+            light_files_all = []
+            for info in member_infos:
+                light_files_all.extend(info["light_files"])
+
+            channel_results[lower_label] = {
                 "label": label,
-                "light_files": list_light_files(lights_dir),
-                "red_final_path": session_process / "red_final.fit",
-                "oiii_sequence": oiii_sequence,
-                "oiii_process_dir": session_process,
+                "light_files": light_files_all,
+                "red_final_path": red_dir / "red_final.fit",
             }
-
-        results_by_key = {}
-
-        for session in sessions:
-            log("------------------------------------------")
-            log(f"Processing {session['label']} session")
-            log("------------------------------------------")
-            results_by_key[session["key"]] = process_session(session)
 
         # ----------------------------------------------------
         # Combine OIII across every session into one sequence and
@@ -979,19 +1080,9 @@ def main():
         log("------------------------------------------")
 
         oiii_dir = process / "oiii_combined"
-        oiii_dir.mkdir(parents=True, exist_ok=True)
-
-        frame_idx = 0
-        oiii_light_files_all = []
-
-        for info in results_by_key.values():
-            src_files = sorted(
-                info["oiii_process_dir"].glob(f"{info['oiii_sequence']}_*.fit")
-            )
-            for f in src_files:
-                frame_idx += 1
-                shutil.move(str(f), str(oiii_dir / f"oiii_all_{frame_idx:05d}.fit"))
-            oiii_light_files_all.extend(info["light_files"])
+        oiii_sources = [(info["process_dir"], info["oiii_sequence"]) for info in results_by_key.values()]
+        frame_idx = merge_sequence_files(oiii_sources, oiii_dir, "oiii_all")
+        oiii_light_files_all = [f for info in results_by_key.values() for f in info["light_files"]]
 
         log(f"Combined OIII frame count: {frame_idx}")
 
@@ -1027,8 +1118,8 @@ def main():
         oiii_final_path = oiii_dir / "oiii_native.fit"
 
         # ----------------------------------------------------
-        # Align every final channel (N red channels + combined OIII)
-        # together on one shared pixel grid.
+        # Align every final channel (one per unique label + combined
+        # OIII) together on one shared pixel grid.
         # ----------------------------------------------------
 
         log("------------------------------------------")
@@ -1041,11 +1132,11 @@ def main():
         channel_indices = {}
         idx = 0
 
-        for session in sessions:
+        for lower_label, info in channel_results.items():
             idx += 1
-            channel_indices[session["key"]] = idx
+            channel_indices[lower_label] = idx
             shutil.move(
-                str(results_by_key[session["key"]]["red_final_path"]),
+                str(info["red_final_path"]),
                 str(final_dir / f"final_{idx:05d}.fit")
             )
 
@@ -1074,16 +1165,12 @@ def main():
         # untouched on every channel, including the reference, so no
         # channel's noise gets amplified by this step - it only
         # gives every channel the same black point for a clean
-        # composite. Reference = the first session labeled "Ha"
-        # (case-insensitive) if any, else the first session in the
-        # list.
+        # composite. Reference = the group labeled "Ha"
+        # (case-insensitive) if any, else the first group.
         # ----------------------------------------------------
 
-        reference_key = next(
-            (s["key"] for s in sessions if s["label"].lower() == "ha"),
-            sessions[0]["key"]
-        )
-        reference_label = results_by_key[reference_key]["label"]
+        reference_key = "ha" if "ha" in channel_results else next(iter(channel_results))
+        reference_label = channel_results[reference_key]["label"]
         reference_idx = channel_indices[reference_key]
 
         def median_match_expression(source_idx):
@@ -1093,26 +1180,28 @@ def main():
                 f"+median($r_final_{reference_idx:05d}$)"
             )
 
-        log(f"Matching backgrounds to {reference_label} (median only, no contrast scaling)...")
+        if match_backgrounds:
+            log(f"Matching backgrounds to {reference_label} (median only, no contrast scaling)...")
+        else:
+            log("Background matching disabled -> saving each channel as stacked.")
 
-        siril.cmd("pm", f'"{median_match_expression(oiii_idx)}"')
+        def save_channel(idx, is_reference, out_path):
+            if match_backgrounds and not is_reference:
+                siril.cmd("pm", f'"{median_match_expression(idx)}"')
+            else:
+                siril.cmd("load", f"r_final_{idx:05d}")
+            siril.cmd("save", str(out_path))
 
         oiii_name = f"{derive_base_name_from_files(oiii_light_files_all)}_OIII_x{scale_tag}"
-        siril.cmd("save", str(results / oiii_name))
+        save_channel(oiii_idx, is_reference=False, out_path=results / oiii_name)
 
         output_names = {"oiii": oiii_name}
 
-        for key, idx in channel_indices.items():
-            info = results_by_key[key]
-
-            if key == reference_key:
-                siril.cmd("load", f"r_final_{idx:05d}")
-            else:
-                siril.cmd("pm", f'"{median_match_expression(idx)}"')
-
+        for lower_label, idx in channel_indices.items():
+            info = channel_results[lower_label]
             name = f"{derive_base_name_from_files(info['light_files'])}_{info['label']}_x{scale_tag}"
-            output_names[key] = name
-            siril.cmd("save", str(results / name))
+            output_names[lower_label] = name
+            save_channel(idx, is_reference=(lower_label == reference_key), out_path=results / name)
 
         # ====================================================
         # DONE
