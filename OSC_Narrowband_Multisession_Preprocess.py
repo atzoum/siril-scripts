@@ -447,10 +447,10 @@ def prompt_settings(root):
     def browse_into(var):
         # Only start from the field's current value if it's a real,
         # existing folder (it's usually still a not-yet-created
-        # default like ".../lights_ha") - otherwise start from the
-        # user's home folder.
+        # default like ".../lights_ha") - otherwise start from
+        # Siril's working directory (its "home").
         current = var.get()
-        start = current if current and Path(current).is_dir() else str(Path.home())
+        start = current if current and Path(current).is_dir() else str(root)
         path = filedialog.askdirectory(initialdir=start)
         if path:
             var.set(path)
