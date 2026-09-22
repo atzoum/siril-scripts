@@ -4,14 +4,15 @@
 #
 # OSC dual-band narrowband preprocessing with an arbitrary number of
 # sessions (not just a fixed Ha-OIII / SII-OIII pair - add as many
-# sessions as you have). Each session is tagged "Ha" or "SII" (which
-# filter it was shot with) - no custom/free-text labels. Sessions
-# sharing the same tag have their red channel merged into ONE
-# combined stack (e.g. two "Ha" sessions from different nights ->
-# one deeper Ha master), exactly like every session's OIII always
-# merges into ONE combined stack regardless of tag. All resulting
-# channels (one per unique tag + 1 combined OIII) are then aligned
-# together on a shared pixel grid.
+# sessions as you have). Each session is tagged with the dual-band
+# filter it was shot with, "Ha-OIII" or "SII-OIII" - no custom/free-
+# text labels. Sessions sharing the same filter have their red
+# channel (Ha for Ha-OIII, SII for SII-OIII) merged into ONE combined
+# stack (e.g. two Ha-OIII sessions from different nights -> one
+# deeper Ha master), exactly like every session's OIII always merges
+# into ONE combined stack regardless of filter. All resulting
+# channels (one per unique filter's red channel + 1 combined OIII)
+# are then aligned together on a shared pixel grid.
 #
 # Session concept and UI approach adapted from Naztronomy's OSC
 # preprocessing script (https://github.com/naztronaut/siril-scripts),
@@ -21,9 +22,9 @@
 # Siril's seqextract_HaOIII always splits Bayer CFA data into a
 # "red channel" sequence and a "green+blue channel" sequence and
 # always names them Ha_*/OIII_* internally, regardless of which real
-# narrowband line the red channel represents - a session's "Ha"/"SII"
-# tag below only controls how ITS output file is named (and its
-# default folder names); the extraction itself is identical either way.
+# narrowband line the red channel represents - a session's filter
+# below only controls how ITS red channel is named (Ha or SII) and
+# its default folder names; the extraction itself is identical either way.
 #
 # Can be run two ways:
 #
@@ -37,27 +38,28 @@
 # working dir unless a session's lights/darks/flats/biases override
 # is set):
 #
-#   lights_ha/ or lights_sii/    REQUIRED (per session; skip a
-#                                session with an empty/missing
-#                                lights folder)
-#   darks_ha/ or darks_sii/      optional
-#   flats_ha/ or flats_sii/      optional
-#   biases_ha/ or biases_sii/    optional
+#   lights_haoiii/ or lights_siioiii/    REQUIRED (per session; skip
+#                                        a session with an empty/
+#                                        missing lights folder)
+#   darks_haoiii/ or darks_siioiii/      optional
+#   flats_haoiii/ or flats_siioiii/      optional
+#   biases_haoiii/ or biases_siioiii/    optional
 #
-# (folder suffix = the session's tag, lowercased)
+# (folder suffix = the session's filter, lowercased with the hyphen
+# removed, e.g. "Ha-OIII" -> haoiii)
 #
 # OUTPUT:
 #
 # Saved directly into Siril's current working folder. Each unique
-# tag's combined red channel gets its own name built from ALL its
+# filter's combined red channel gets its own name built from ALL its
 # member sessions' light frames put together (common filename
 # prefix, kept whole through a shared date even though per-frame
 # time differs, plus "<n>x<exposure>s" or "<n>f"); the combined
 # OIII's name is built the same way from EVERY session's light
 # frames put together:
 #
-#   <lights prefix>_Ha_x<scale>.fit    (if any "Ha" session given)
-#   <lights prefix>_SII_x<scale>.fit   (if any "SII" session given)
+#   <lights prefix>_Ha_x<scale>.fit    (if any Ha-OIII session given)
+#   <lights prefix>_SII_x<scale>.fit   (if any SII-OIII session given)
 #   <lights prefix>_OIII_x<scale>.fit  (from ALL sessions' OIII)
 #
 #
@@ -335,6 +337,16 @@ def prompt_settings(root):
     outer = ttk.Frame(win, padding=10)
     outer.grid(sticky="nsew")
 
+    ttk.Label(
+        outer,
+        text="Combines one or more Ha-OIII / SII-OIII imaging sessions "
+             "into separate Ha, SII and OIII stacks. Your camera's "
+             "sensor splits colors in a checkerboard pattern, so the "
+             "red channel starts at half resolution - this script "
+             "drizzles it back up to full size.",
+        wraplength=560, justify="left"
+    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
     scale_var = tk.StringVar(value=f"{SCALE:g}")
     pixfrac_var = tk.StringVar(value=f"{PIXFRAC:g}")
     cleanup_var = tk.BooleanVar(value=CLEANUP_PREVIOUS)
@@ -381,7 +393,7 @@ def prompt_settings(root):
     # --------------------------------------------------------
 
     left = ttk.Frame(outer)
-    left.grid(row=0, column=0, sticky="ns", padx=(0, 10))
+    left.grid(row=1, column=0, sticky="ns", padx=(0, 10))
 
     ttk.Label(left, text="Sessions", style="Header.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
 
@@ -436,7 +448,7 @@ def prompt_settings(root):
     # --------------------------------------------------------
 
     editor = ttk.Labelframe(outer, text="Session", padding=8)
-    editor.grid(row=0, column=1, sticky="nsew")
+    editor.grid(row=1, column=1, sticky="nsew")
 
     def set_state(widget, enabled):
         widget.state(["!disabled"] if enabled else ["disabled"])
@@ -547,7 +559,7 @@ def prompt_settings(root):
     # --------------------------------------------------------
 
     opts = ttk.Frame(outer)
-    opts.grid(row=1, column=0, columnspan=2, sticky="we", pady=(10, 0))
+    opts.grid(row=2, column=0, columnspan=2, sticky="we", pady=(10, 0))
 
     ttk.Label(opts, text="Options", style="Header.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
 
@@ -659,7 +671,7 @@ def prompt_settings(root):
         win.destroy()
 
     btns = ttk.Frame(outer)
-    btns.grid(row=2, column=0, columnspan=2, pady=(10, 0))
+    btns.grid(row=3, column=0, columnspan=2, pady=(10, 0))
     ttk.Button(btns, text="Run", command=on_run).pack(side="left", padx=5)
     ttk.Button(btns, text="Cancel", command=on_cancel).pack(side="left", padx=5)
 
