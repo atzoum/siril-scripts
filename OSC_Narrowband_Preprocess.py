@@ -366,7 +366,13 @@ def prompt_settings(root):
             entry.grid(row=this_row, column=1, sticky="we")
 
             def browse():
-                path = filedialog.askdirectory(initialdir=path_var.get() or str(root))
+                # Only start from the field's current value if it's a
+                # real, existing folder (it's usually still a not-yet-
+                # created default like ".../lights_haoiii") - otherwise
+                # start from the user's home folder.
+                current = path_var.get()
+                start = current if current and Path(current).is_dir() else str(Path.home())
+                path = filedialog.askdirectory(initialdir=start)
                 if path:
                     path_var.set(path)
 

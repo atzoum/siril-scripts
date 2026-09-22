@@ -445,7 +445,13 @@ def prompt_settings(root):
     erow += 1
 
     def browse_into(var):
-        path = filedialog.askdirectory(initialdir=var.get() or str(root))
+        # Only start from the field's current value if it's a real,
+        # existing folder (it's usually still a not-yet-created
+        # default like ".../lights_ha") - otherwise start from the
+        # user's home folder.
+        current = var.get()
+        start = current if current and Path(current).is_dir() else str(Path.home())
+        path = filedialog.askdirectory(initialdir=start)
         if path:
             var.set(path)
             refresh_listbox()
