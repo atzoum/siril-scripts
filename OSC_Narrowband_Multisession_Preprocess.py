@@ -334,13 +334,16 @@ def prompt_settings(root):
     style.configure("Header.TLabel", font=("TkDefaultFont", 9, "bold"))
     style.configure("Note.TLabel", font=("TkDefaultFont", 8), foreground="#666666")
 
-    def autowrap(label):
-        # Rewrap to the label's own current width instead of a fixed
-        # guess, so it stays correct if the window gets resized.
-        label.bind("<Configure>", lambda e: label.configure(wraplength=e.width))
-
     outer = ttk.Frame(win, padding=10)
     outer.grid(sticky="nsew")
+
+    # Fixed wraplength wide enough to span the window's actual content
+    # width (set by the wider entry/combobox rows below). A dynamic,
+    # resize-driven wraplength was tried and removed: since this window
+    # auto-sizes to fit its content, changing a label's wraplength on
+    # <Configure> changes its requested size, which resizes the window,
+    # which fires another <Configure> - an infinite resize loop.
+    WRAP = 560
 
     intro_label = ttk.Label(
         outer,
@@ -349,10 +352,9 @@ def prompt_settings(root):
              "sensor splits colors in a checkerboard pattern, so the "
              "red channel starts at half resolution - this script "
              "drizzles it back up to full size.",
-        wraplength=560, justify="left"
+        wraplength=WRAP, justify="left"
     )
     intro_label.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 10))
-    autowrap(intro_label)
 
     scale_var = tk.StringVar(value=f"{SCALE:g}")
     pixfrac_var = tk.StringVar(value=f"{PIXFRAC:g}")
@@ -560,15 +562,13 @@ def prompt_settings(root):
         opts, textvariable=scale_var, values=["1", "1.5", "2", "2.5", "3"], width=8
     ).grid(row=1, column=1, sticky="w", pady=(4, 0))
 
-    drizzle_note = ttk.Label(
+    ttk.Label(
         opts,
         text="The red channel is always 2x drizzled first, then scaled "
              "up further if this is set above 1. Other channels follow "
              "this setting directly.",
-        style="Note.TLabel", wraplength=420, justify="left"
-    )
-    drizzle_note.grid(row=2, column=0, columnspan=3, sticky="we", pady=(0, 4))
-    autowrap(drizzle_note)
+        style="Note.TLabel", wraplength=WRAP, justify="left"
+    ).grid(row=2, column=0, columnspan=3, sticky="we", pady=(0, 4))
 
     ttk.Label(opts, text="Drizzle pixel fraction:").grid(row=3, column=0, sticky="w", pady=4)
     ttk.Combobox(
@@ -586,19 +586,14 @@ def prompt_settings(root):
         variable=match_backgrounds_var
     ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
-    match_note = ttk.Label(
+    ttk.Label(
         opts,
-        text="When on, every other channel's background level (median) "
-             "is shifted to match the reference channel's (\"Ha\" if you "
-             "have one, else \"SII\") - just a black-point match via "
-             "PixelMath, not a scale/contrast match, so it won't amplify "
-             "a fainter channel's noise. The reference channel itself is "
-             "never touched. When off, every channel (including OIII) is "
-             "saved exactly as stacked, with no adjustment between them.",
-        style="Note.TLabel", wraplength=420, justify="left"
-    )
-    match_note.grid(row=6, column=0, columnspan=3, sticky="we", pady=(0, 4))
-    autowrap(match_note)
+        text="Aligns each channel's background brightness to the "
+             "reference (Ha if present, else SII) without touching "
+             "contrast, so it won't amplify noise. Off leaves every "
+             "channel exactly as stacked.",
+        style="Note.TLabel", wraplength=WRAP, justify="left"
+    ).grid(row=6, column=0, columnspan=3, sticky="we", pady=(0, 4))
 
     ttk.Checkbutton(
         opts, text="Clean up previous run's intermediate files", variable=cleanup_var

@@ -320,10 +320,13 @@ def prompt_settings(root):
     style.configure("Header.TLabel", font=("TkDefaultFont", 9, "bold"))
     style.configure("Header.TCheckbutton", font=("TkDefaultFont", 9, "bold"))
 
-    def autowrap(label):
-        # Rewrap to the label's own current width instead of a fixed
-        # guess, so it stays correct if the window gets resized.
-        label.bind("<Configure>", lambda e: label.configure(wraplength=e.width))
+    # Fixed wraplength wide enough to span the window's actual content
+    # width (set by the wider entry/combobox rows below). A dynamic,
+    # resize-driven wraplength was tried and removed: since this window
+    # auto-sizes to fit its content, changing a label's wraplength on
+    # <Configure> changes its requested size, which resizes the window,
+    # which fires another <Configure> - an infinite resize loop.
+    WRAP = 560
 
     row = 0
 
@@ -435,15 +438,13 @@ def prompt_settings(root):
     ).grid(row=row, column=1, sticky="w", pady=(4, 0))
     row += 1
 
-    drizzle_note = ttk.Label(
+    ttk.Label(
         frm,
         text="The red channel is always 2x drizzled first, then scaled "
              "up further if this is set above 1. OIII follows this "
              "setting directly.",
-        style="Note.TLabel", wraplength=420, justify="left"
-    )
-    drizzle_note.grid(row=row, column=0, columnspan=3, sticky="we", pady=(0, 4))
-    autowrap(drizzle_note)
+        style="Note.TLabel", wraplength=WRAP, justify="left"
+    ).grid(row=row, column=0, columnspan=3, sticky="we", pady=(0, 4))
     row += 1
 
     ttk.Label(frm, text="Drizzle pixel fraction:").grid(row=row, column=0, sticky="w", pady=4)
