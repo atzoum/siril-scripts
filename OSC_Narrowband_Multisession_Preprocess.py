@@ -397,16 +397,8 @@ def prompt_settings(root):
 
     ttk.Label(left, text="Sessions", style="Header.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
 
-    ttk.Label(
-        left,
-        text="Multiple sessions can use the same filter (e.g. two "
-             "Ha-OIII nights) - their red channels merge into one "
-             "combined stack per filter.",
-        style="Note.TLabel", wraplength=220, justify="left"
-    ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 4))
-
     listbox = tk.Listbox(left, width=32, height=10, exportselection=False)
-    listbox.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(2, 4))
+    listbox.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(2, 4))
 
     def describe(index):
         sv = sessions[index]
@@ -440,8 +432,8 @@ def prompt_settings(root):
         sessions.pop(idx)
         refresh_listbox(select_index=min(idx, len(sessions) - 1))
 
-    ttk.Button(left, text="+ Add Session", command=add_session).grid(row=3, column=0, sticky="we")
-    ttk.Button(left, text="− Remove Session", command=remove_session).grid(row=3, column=1, sticky="we")
+    ttk.Button(left, text="+ Add Session", command=add_session).grid(row=2, column=0, sticky="we")
+    ttk.Button(left, text="− Remove Session", command=remove_session).grid(row=2, column=1, sticky="we")
 
     # --------------------------------------------------------
     # Right: editor panel for the currently selected session
@@ -455,16 +447,9 @@ def prompt_settings(root):
 
     erow = 0
 
-    ttk.Label(editor, text="Filter type:").grid(row=erow, column=0, sticky="w")
+    ttk.Label(editor, text="Filter type:").grid(row=erow, column=0, sticky="w", pady=(0, 8))
     filter_combo = ttk.Combobox(editor, values=list(FILTER_TYPES), width=17, state="readonly")
-    filter_combo.grid(row=erow, column=1, sticky="w")
-    erow += 1
-
-    ttk.Label(
-        editor,
-        text="Dual-band filter used for this session.",
-        style="Note.TLabel", wraplength=340, justify="left"
-    ).grid(row=erow, column=0, columnspan=3, sticky="w", pady=(0, 8))
+    filter_combo.grid(row=erow, column=1, sticky="w", pady=(0, 8))
     erow += 1
 
     def browse_into(var):
@@ -570,8 +555,9 @@ def prompt_settings(root):
 
     ttk.Label(
         opts,
-        text="Note: every session's red channel is always true-drizzled "
-             "2x regardless of this value; it only adds further scaling on top.",
+        text="The red channel is always 2x drizzled first, then scaled "
+             "up further if this is set above 1. Other channels follow "
+             "this setting directly.",
         style="Note.TLabel", wraplength=420, justify="left"
     ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(0, 4))
 
