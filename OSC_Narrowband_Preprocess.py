@@ -320,6 +320,11 @@ def prompt_settings(root):
     style.configure("Header.TLabel", font=("TkDefaultFont", 9, "bold"))
     style.configure("Header.TCheckbutton", font=("TkDefaultFont", 9, "bold"))
 
+    def autowrap(label):
+        # Rewrap to the label's own current width instead of a fixed
+        # guess, so it stays correct if the window gets resized.
+        label.bind("<Configure>", lambda e: label.configure(wraplength=e.width))
+
     row = 0
 
     def section(title):
@@ -430,12 +435,15 @@ def prompt_settings(root):
     ).grid(row=row, column=1, sticky="w", pady=(4, 0))
     row += 1
 
-    ttk.Label(
+    drizzle_note = ttk.Label(
         frm,
-        text="Note: the red channel (Ha/SII) is always true-drizzled 2x "
-             "regardless of this value; it only adds further scaling on top.",
+        text="The red channel is always 2x drizzled first, then scaled "
+             "up further if this is set above 1. OIII follows this "
+             "setting directly.",
         style="Note.TLabel", wraplength=420, justify="left"
-    ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 4))
+    )
+    drizzle_note.grid(row=row, column=0, columnspan=3, sticky="we", pady=(0, 4))
+    autowrap(drizzle_note)
     row += 1
 
     ttk.Label(frm, text="Drizzle pixel fraction:").grid(row=row, column=0, sticky="w", pady=4)

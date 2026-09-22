@@ -334,10 +334,15 @@ def prompt_settings(root):
     style.configure("Header.TLabel", font=("TkDefaultFont", 9, "bold"))
     style.configure("Note.TLabel", font=("TkDefaultFont", 8), foreground="#666666")
 
+    def autowrap(label):
+        # Rewrap to the label's own current width instead of a fixed
+        # guess, so it stays correct if the window gets resized.
+        label.bind("<Configure>", lambda e: label.configure(wraplength=e.width))
+
     outer = ttk.Frame(win, padding=10)
     outer.grid(sticky="nsew")
 
-    ttk.Label(
+    intro_label = ttk.Label(
         outer,
         text="Combines one or more Ha-OIII / SII-OIII imaging sessions "
              "into separate Ha, SII and OIII stacks. Your camera's "
@@ -345,7 +350,9 @@ def prompt_settings(root):
              "red channel starts at half resolution - this script "
              "drizzles it back up to full size.",
         wraplength=560, justify="left"
-    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+    )
+    intro_label.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 10))
+    autowrap(intro_label)
 
     scale_var = tk.StringVar(value=f"{SCALE:g}")
     pixfrac_var = tk.StringVar(value=f"{PIXFRAC:g}")
@@ -553,13 +560,15 @@ def prompt_settings(root):
         opts, textvariable=scale_var, values=["1", "1.5", "2", "2.5", "3"], width=8
     ).grid(row=1, column=1, sticky="w", pady=(4, 0))
 
-    ttk.Label(
+    drizzle_note = ttk.Label(
         opts,
         text="The red channel is always 2x drizzled first, then scaled "
              "up further if this is set above 1. Other channels follow "
              "this setting directly.",
         style="Note.TLabel", wraplength=420, justify="left"
-    ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(0, 4))
+    )
+    drizzle_note.grid(row=2, column=0, columnspan=3, sticky="we", pady=(0, 4))
+    autowrap(drizzle_note)
 
     ttk.Label(opts, text="Drizzle pixel fraction:").grid(row=3, column=0, sticky="w", pady=4)
     ttk.Combobox(
@@ -577,7 +586,7 @@ def prompt_settings(root):
         variable=match_backgrounds_var
     ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
-    ttk.Label(
+    match_note = ttk.Label(
         opts,
         text="When on, every other channel's background level (median) "
              "is shifted to match the reference channel's (\"Ha\" if you "
@@ -587,7 +596,9 @@ def prompt_settings(root):
              "never touched. When off, every channel (including OIII) is "
              "saved exactly as stacked, with no adjustment between them.",
         style="Note.TLabel", wraplength=420, justify="left"
-    ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(0, 4))
+    )
+    match_note.grid(row=6, column=0, columnspan=3, sticky="we", pady=(0, 4))
+    autowrap(match_note)
 
     ttk.Checkbutton(
         opts, text="Clean up previous run's intermediate files", variable=cleanup_var
