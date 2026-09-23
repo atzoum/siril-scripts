@@ -1163,15 +1163,27 @@ def main():
         cd(final_dir)
 
         #
-        # -2pass here only computes the shift; seqapplyreg then crops
-        # every final_NNNNN to their mutual common area (-framing=min),
-        # which is required for them to come out the same pixel size -
-        # they were cropped independently (each to its own sequence's
-        # overlap) during the per-channel/combined stacks above, so
-        # their sizes can differ by a few pixels before this step.
+        # -2pass here only computes the transform; seqapplyreg then
+        # crops every final_NNNNN to their mutual common area
+        # (-framing=min), which is required for them to come out the
+        # same pixel size - they were cropped independently (each to
+        # its own sequence's overlap) during the per-channel/combined
+        # stacks above, so their sizes can differ by a few pixels
+        # before this step.
+        #
+        # -transf=similarity (shift + rotation + uniform scale) rather
+        # than a plain shift: different sessions/nights commonly have
+        # slightly different field rotation, and Ha's reconstruction
+        # (half-res red extraction, true-drizzled 2x) vs OIII's
+        # (native-res, red interpolated away) don't have any guarantee
+        # of landing on exactly scale-matched grids. A plain shift
+        # can't correct either of those, leaving a small residual
+        # misalignment. affine/homography would handle even more
+        # distortion, but risk overfitting with the few, often noisy
+        # star pairs available between narrowband channels.
         #
 
-        siril.cmd("register", "final", "-2pass", "-transf=shift")
+        siril.cmd("register", "final", "-2pass", "-transf=similarity")
         siril.cmd("seqapplyreg", "final", "-interp=lanczos4", "-framing=min")
 
         # ----------------------------------------------------
