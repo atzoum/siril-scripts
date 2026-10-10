@@ -288,8 +288,7 @@ def derive_base_name_from_files(files):
 
     common = common.strip("_- ")
 
-    # Siril's cmd() joins arguments with plain spaces (no quoting), so
-    # a space in the output filename would break commands like "save".
+    # Keep generated output filenames space-free.
     common = re.sub(r"\s+", "_", common)
     common = re.sub(r"_+", "_", common)
 
@@ -646,8 +645,17 @@ def main():
             print(message)
             siril.log(message)
 
+        def cmd(*args):
+            # Siril's cmd() joins arguments with plain spaces (no
+            # quoting), so wrap any argument containing whitespace -
+            # e.g. a path under "D:\My Astro" - in double quotes.
+            siril.cmd(*(
+                f'"{arg}"' if re.search(r"\s", arg) and not arg.startswith('"') else arg
+                for arg in map(str, args)
+            ))
+
         def cd(directory):
-            siril.cmd("cd", str(directory))
+            cmd("cd", directory)
 
         # ----------------------------------------------------
         # Which sessions are active?
@@ -739,7 +747,7 @@ def main():
 
             def convert_frames(kind, frames_dir):
                 cd(frames_dir)
-                siril.cmd("convert", kind, f"-out={session_process}")
+                cmd("convert", kind, f"-out={session_process}")
                 cd(session_process)
 
             # ---- BIAS ----
@@ -747,7 +755,7 @@ def main():
             if has_biases:
                 log(f"[{label}] Creating master bias...")
                 convert_frames("bias", biases_dir)
-                siril.cmd(
+                cmd(
                     "stack", "bias",
                     "rej", "3", "3",
                     "-nonorm", "-32b",
@@ -765,7 +773,7 @@ def main():
 
                 if has_biases:
                     log(f"[{label}] Calibrating flats with master bias.")
-                    siril.cmd(
+                    cmd(
                         "calibrate", "flat",
                         f"-bias={session_masters / 'bias_stacked'}"
                     )
@@ -777,7 +785,7 @@ def main():
                     )
                     flat_sequence = "flat"
 
-                siril.cmd(
+                cmd(
                     "stack", flat_sequence,
                     "rej", "3", "3",
                     "-norm=mul", "-32b",
@@ -793,7 +801,7 @@ def main():
             if has_darks:
                 log(f"[{label}] Creating master dark...")
                 convert_frames("dark", darks_dir)
-                siril.cmd(
+                cmd(
                     "stack", "dark",
                     "rej", "3", "3",
                     "-nonorm", "-32b",
@@ -847,7 +855,7 @@ def main():
 
                 log(f"[{label}] Calibrating lights using: " + ", ".join(methods))
 
-                siril.cmd("calibrate", "light", *calibration_args)
+                cmd("calibrate", "light", *calibration_args)
 
                 light_sequence = "pp_light"
 
@@ -864,7 +872,7 @@ def main():
             # Deliberately DO NOT use -resample=ha: the red-channel
             # extraction stays half-resolution so drizzle gets the
             # original red CFA samples.
-            siril.cmd("seqextract_HaOIII", light_sequence)
+            cmd("seqextract_HaOIII", light_sequence)
 
             red_sequence = f"Ha_{light_sequence}"
             oiii_sequence = f"OIII_{light_sequence}"
@@ -872,10 +880,10 @@ def main():
             # ---- RED CHANNEL: register + true 2x drizzle + stack ----
 
             log(f"[{label}] Calculating {label} registration...")
-            siril.cmd("register", red_sequence, "-2pass")
+            cmd("register", red_sequence, "-2pass")
 
             log(f"[{label}] Applying true 2x drizzle to {label}...")
-            siril.cmd(
+            cmd(
                 "seqapplyreg", red_sequence,
                 "-scale=2", "-drizzle",
                 f"-pixfrac={pixfrac}", f"-kernel={KERNEL}",
@@ -885,7 +893,7 @@ def main():
             registered_red = f"r_{red_sequence}"
 
             log(f"[{label}] Stacking {label}...")
-            siril.cmd(
+            cmd(
                 "stack", registered_red,
                 "rej", "3", "3",
                 "-norm=addscale",
@@ -894,16 +902,16 @@ def main():
                 "-out=red_native"
             )
 
-            siril.cmd("mirrorx_single", "red_native")
-            siril.cmd("load", "red_native")
+            cmd("mirrorx_single", "red_native")
+            cmd("load", "red_native")
 
             if scale_is_one:
                 log(f"[{label}] SCALE = 1 -> {label} already at final resolution.")
             else:
                 log(f"[{label}] SCALE = {scale:g} -> Lanczos resampling {label} to final resolution.")
-                siril.cmd("resample", f"{scale:g}", "-interp=lanczos4")
+                cmd("resample", f"{scale:g}", "-interp=lanczos4")
 
-            siril.cmd("save", "red_final")
+            cmd("save", "red_final")
 
             return {
                 "key": key,
@@ -952,14 +960,14 @@ def main():
         cd(oiii_dir)
 
         log("Calculating combined OIII registration...")
-        siril.cmd("register", "oiii_all", "-2pass")
+        cmd("register", "oiii_all", "-2pass")
 
         if scale_is_one:
             log("SCALE = 1 -> applying normal OIII registration.")
-            siril.cmd("seqapplyreg", "oiii_all", "-interp=lanczos4", "-framing=min")
+            cmd("seqapplyreg", "oiii_all", "-interp=lanczos4", "-framing=min")
         else:
             log(f"Applying true {scale:g}x drizzle to OIII...")
-            siril.cmd(
+            cmd(
                 "seqapplyreg", "oiii_all",
                 f"-scale={scale:g}", "-drizzle",
                 f"-pixfrac={pixfrac}", f"-kernel={KERNEL}",
@@ -967,7 +975,7 @@ def main():
             )
 
         log("Stacking combined OIII...")
-        siril.cmd(
+        cmd(
             "stack", "r_oiii_all",
             "rej", "3", "3",
             "-norm=addscale",
@@ -976,7 +984,7 @@ def main():
             "-out=oiii_native"
         )
 
-        siril.cmd("mirrorx_single", "oiii_native")
+        cmd("mirrorx_single", "oiii_native")
 
         oiii_final_path = oiii_dir / "oiii_native.fit"
 
@@ -1031,8 +1039,8 @@ def main():
         # star pairs available between narrowband channels.
         #
 
-        siril.cmd("register", "final", "-2pass", "-transf=similarity")
-        siril.cmd("seqapplyreg", "final", "-interp=lanczos4", "-framing=min")
+        cmd("register", "final", "-2pass", "-transf=similarity")
+        cmd("seqapplyreg", "final", "-interp=lanczos4", "-framing=min")
 
         # ----------------------------------------------------
         # Background-only match: every non-reference channel gets
@@ -1057,10 +1065,10 @@ def main():
 
         log(f"Matching backgrounds to {reference_label} (median only, no contrast scaling)...")
 
-        siril.cmd("pm", f'"{median_match_expression(oiii_idx)}"')
+        cmd("pm", f'"{median_match_expression(oiii_idx)}"')
 
         oiii_name = f"{derive_base_name_from_files(oiii_light_files_all)}_OIII_x{scale_tag}"
-        siril.cmd("save", str(results / oiii_name))
+        cmd("save", str(results / oiii_name))
 
         output_names = {"oiii": oiii_name}
 
@@ -1068,19 +1076,19 @@ def main():
             info = results_by_key[key]
 
             if key == reference_key:
-                siril.cmd("load", f"r_final_{idx:05d}")
+                cmd("load", f"r_final_{idx:05d}")
             else:
-                siril.cmd("pm", f'"{median_match_expression(idx)}"')
+                cmd("pm", f'"{median_match_expression(idx)}"')
 
             name = f"{derive_base_name_from_files(info['light_files'])}_{info['label']}_x{scale_tag}"
             output_names[key] = name
-            siril.cmd("save", str(results / name))
+            cmd("save", str(results / name))
 
         # ====================================================
         # DONE
         # ====================================================
 
-        siril.cmd("close")
+        cmd("close")
 
         # Move Siril's CWD out of _hao3_process before deleting it -
         # otherwise Windows can refuse to remove a directory that is
