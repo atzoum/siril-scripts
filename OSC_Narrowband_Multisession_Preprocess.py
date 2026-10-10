@@ -751,8 +751,8 @@ def main():
 
         # Dedicated temporary folders so we don't touch the normal
         # Siril process/masters directories.
-        process = root / "_hao3_process"
-        masters = root / "_hao3_masters"
+        process = root / "_nb_process"
+        masters = root / "_nb_masters"
 
         # Final results are saved directly into the current (Siril
         # working) folder.
@@ -770,13 +770,29 @@ def main():
             # Siril's cmd() joins arguments with plain spaces (no
             # quoting), so wrap any argument containing whitespace -
             # e.g. a path under "D:\My Astro" - in double quotes.
+            # Not every command honours quotes inside "-opt=value"
+            # though (stack -out= doesn't), so path options should
+            # also go through rel() below.
             siril.cmd(*(
                 f'"{arg}"' if re.search(r"\s", arg) and not arg.startswith('"') else arg
                 for arg in map(str, args)
             ))
 
+        siril_cwd = [root]
+
         def cd(directory):
             cmd("cd", directory)
+            siril_cwd[0] = Path(directory)
+
+        def rel(path):
+            # Path relative to Siril's current directory, so a space
+            # in the (shared) working-directory prefix never reaches
+            # the command line. Falls back to the absolute path when
+            # no relative one exists (e.g. a different drive).
+            try:
+                return os.path.relpath(path, siril_cwd[0])
+            except ValueError:
+                return str(path)
 
         # ----------------------------------------------------
         # Which sessions are active? Build a unique key per session
@@ -880,41 +896,58 @@ def main():
 
             def convert_frames(kind, frames_dir):
                 cd(frames_dir)
-                cmd("convert", kind, f"-out={session_process}")
+                cmd("convert", kind, f"-out={rel(session_process)}")
                 cd(session_process)
 
-            def build_simple_master(kind, has_frames, frames_dir):
+            def single_frame(sequence):
+                # Siril doesn't treat a one-frame conversion as a
+                # sequence (stack/calibrate fail with "No sequence
+                # found"), so a lone frame is handled as an image.
+                return next(session_process.glob(f"{sequence}_00001.*")).name
+
+            def stack_master(sequence, frame_count, norm, master):
+                if frame_count > 1:
+                    cmd(
+                        "stack", sequence,
+                        "rej", "3", "3",
+                        norm, "-32b",
+                        f"-out={rel(master)}"
+                    )
+                else:
+                    log(f"[{label}] Only one frame -> using it as the master as-is.")
+                    cmd("load", single_frame(sequence))
+                    cmd("save", rel(master))
+
+            def build_simple_master(kind, frames_dir):
                 # Shared by BIAS and DARKS, which are identical apart
                 # from the frame kind - FLATS additionally needs the
                 # bias-calibration branch below, so it stays separate.
-                if not has_frames:
+                frame_count = len(list_light_files(frames_dir))
+                if not frame_count:
                     log(f"[{label}] No {kind}s found -> skipping master {kind}.")
                     return
                 log(f"[{label}] Creating master {kind}...")
                 convert_frames(kind, frames_dir)
-                cmd(
-                    "stack", kind,
-                    "rej", "3", "3",
-                    "-nonorm", "-32b",
-                    f"-out={session_masters / f'{kind}_stacked'}"
-                )
+                stack_master(kind, frame_count, "-nonorm", session_masters / f"{kind}_stacked")
 
             # ---- BIAS ----
 
-            build_simple_master("bias", has_biases, biases_dir)
+            build_simple_master("bias", biases_dir)
 
             # ---- FLATS ----
 
             if has_flats:
 
                 log(f"[{label}] Creating master flat...")
+                flat_count = len(list_light_files(flats_dir))
                 convert_frames("flat", flats_dir)
 
                 if has_biases:
                     log(f"[{label}] Calibrating flats with master bias.")
                     cmd(
-                        "calibrate", "flat",
-                        f"-bias={session_masters / 'bias_stacked'}"
+                        "calibrate" if flat_count > 1 else "calibrate_single",
+                        "flat" if flat_count > 1 else single_frame("flat"),
+                        f"-bias={rel(session_masters / 'bias_stacked')}"
                     )
                     flat_sequence = "pp_flat"
                 else:
@@ -924,12 +957,7 @@ def main():
                     )
                     flat_sequence = "flat"
 
-                cmd(
-                    "stack", flat_sequence,
-                    "rej", "3", "3",
-                    "-norm=mul", "-32b",
-                    f"-out={session_masters / 'flat_stacked'}"
-                )
+                stack_master(flat_sequence, flat_count, "-norm=mul", session_masters / "flat_stacked")
 
             else:
 
@@ -937,7 +965,7 @@ def main():
 
             # ---- DARKS ----
 
-            build_simple_master("dark", has_darks, darks_dir)
+            build_simple_master("dark", darks_dir)
 
             # ---- LIGHTS: convert + calibrate ----
 
@@ -950,7 +978,7 @@ def main():
             # lights - the master dark already contains the offset.
             if has_darks:
                 calibration_args.extend([
-                    f"-dark={session_masters / 'dark_stacked'}",
+                    f"-dark={rel(session_masters / 'dark_stacked')}",
                     "-cc=dark"
                 ])
                 if has_biases:
@@ -961,12 +989,12 @@ def main():
                     )
             elif has_biases:
                 calibration_args.append(
-                    f"-bias={session_masters / 'bias_stacked'}"
+                    f"-bias={rel(session_masters / 'bias_stacked')}"
                 )
 
             if has_flats:
                 calibration_args.extend([
-                    f"-flat={session_masters / 'flat_stacked'}",
+                    f"-flat={rel(session_masters / 'flat_stacked')}",
                     "-equalize_cfa"
                 ])
 
@@ -1225,7 +1253,7 @@ def main():
                 cmd("pm", f'"{median_match_expression(idx)}"')
             else:
                 cmd("load", f"r_final_{idx:05d}")
-            cmd("save", str(out_path))
+            cmd("save", rel(out_path))
 
         oiii_name = f"{derive_base_name_from_files(oiii_light_files_all)}_OIII_x{scale_tag}"
         save_channel(oiii_idx, is_reference=False, out_path=results / oiii_name)
@@ -1244,7 +1272,7 @@ def main():
 
         cmd("close")
 
-        # Move Siril's CWD out of _hao3_process before deleting it -
+        # Move Siril's CWD out of _nb_process before deleting it -
         # otherwise Windows can refuse to remove a directory that is
         # still a process's current working directory.
         cd(root)
