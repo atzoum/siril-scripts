@@ -14,6 +14,13 @@
 # channels (one per unique filter's red channel + 1 combined OIII)
 # are then aligned together on a shared pixel grid.
 #
+# Sessions can also be tagged "RGB" - shot without a narrowband
+# filter (e.g. UV/IR-cut, for natural star colour). Those are NOT
+# channel-split: they're debayered, merged across every RGB session
+# into ONE full-colour stack, and aligned on the same pixel grid as
+# the narrowband channels so they superimpose directly (e.g. for
+# star replacement). At least one narrowband session is required.
+#
 # Session concept and UI approach adapted from Naztronomy's OSC
 # preprocessing script (https://github.com/naztronaut/siril-scripts),
 # reimplemented in plain tkinter (no extra dependencies) instead of
@@ -30,7 +37,12 @@
 #
 #   USE_GUI = True   -> shows a dialog to manage sessions and pick
 #                        options, for interactive use from Siril's
-#                        GUI. Sessions can be added/removed freely.
+#                        GUI. Sessions can be added/removed freely;
+#                        each session's lights/darks/flats/biases are
+#                        picked as files (from any folder, via "Add
+#                        ..." buttons) and hard-linked - or copied,
+#                        if on another drive - into a temporary
+#                        _nb_input folder for processing.
 #   USE_GUI = False  -> uses the SESSIONS list and USER SETTING
 #                        values below as-is, for headless use.
 #
@@ -39,14 +51,14 @@
 # is set):
 #
 #   lights_haoiii/ or lights_siioiii/    REQUIRED (per session; skip
-#                                        a session with an empty/
+#     or lights_rgb/                     a session with an empty/
 #                                        missing lights folder)
-#   darks_haoiii/ or darks_siioiii/      optional
-#   flats_haoiii/ or flats_siioiii/      optional
-#   biases_haoiii/ or biases_siioiii/    optional
+#   darks_haoiii/ ... darks_rgb/         optional
+#   flats_haoiii/ ... flats_rgb/         optional
+#   biases_haoiii/ ... biases_rgb/       optional
 #
 # (folder suffix = the session's filter, lowercased with the hyphen
-# removed, e.g. "Ha-OIII" -> haoiii)
+# removed, e.g. "Ha-OIII" -> haoiii, "RGB" -> rgb)
 #
 # OUTPUT:
 #
@@ -55,12 +67,16 @@
 # member sessions' light frames put together (common filename
 # prefix, kept whole through a shared date even though per-frame
 # time differs, plus "<n>x<exposure>s" or "<n>f"); the combined
-# OIII's name is built the same way from EVERY session's light
-# frames put together:
+# OIII's name is built the same way from EVERY narrowband session's
+# light frames put together, and the RGB stack's from every RGB
+# session's:
 #
 #   <lights prefix>_Ha_x<scale>.fit    (if any Ha-OIII session given)
 #   <lights prefix>_SII_x<scale>.fit   (if any SII-OIII session given)
-#   <lights prefix>_OIII_x<scale>.fit  (from ALL sessions' OIII)
+#   <lights prefix>_OIII_x<scale>.fit  (from ALL narrowband sessions)
+#   <lights prefix>_RGB_x<scale>.fit   (if any RGB session given;
+#                                       colour, not colour-calibrated
+#                                       - run SPCC/PCC on it yourself)
 #
 #
 # NORMALIZATION
@@ -76,7 +92,8 @@
 # is not a scientific calibration. The reference channel itself is
 # always saved as-is, un-normalized. If MATCH_BACKGROUNDS is False,
 # every channel (including OIII) is saved exactly as stacked, with
-# no background matching at all.
+# no background matching at all. The RGB stack is never background-
+# matched either way, so its colour balance is left intact.
 #
 #
 # SCALE behaviour
@@ -91,6 +108,9 @@
 #   OIII (combined across sessions):
 #       native full-resolution extraction -> normal registration
 #
+#   RGB (combined across RGB sessions):
+#       full-resolution debayer -> normal registration
+#
 # SCALE > 1
 #
 #   Each session's red channel:
@@ -100,6 +120,9 @@
 #   OIII:
 #       native full-resolution extraction -> TRUE drizzle directly
 #       by SCALE
+#
+#   RGB:
+#       full-resolution debayer -> TRUE drizzle directly by SCALE
 #
 # Siril drizzle supports scales up to 3. Note: a session's red
 # channel is ALWAYS true-drizzled 2x regardless of SCALE - SCALE
@@ -160,15 +183,18 @@ STACK_WEIGHT = None
 # is saved exactly as stacked, with no background matching at all.
 MATCH_BACKGROUNDS = True
 
-# One entry per session. "filter" must be "Ha-OIII" or "SII-OIII" -
-# the dual-band filter this session was shot with. It sets the
-# session's default folder names (see INPUT FOLDERS above) and, via
-# its red channel ("Ha" for a Ha-OIII filter, "SII" for SII-OIII),
-# the session's output filename. Add or remove entries freely; a
-# session with no light frames is skipped. Two sessions with the
-# same filter (e.g. two Ha-OIII sessions from different nights) have
-# their red channels merged into one combined stack, same as OIII
-# always does across every session regardless of filter.
+# One entry per session. "filter" must be "Ha-OIII", "SII-OIII" or
+# "RGB" - the filter this session was shot with ("RGB" = no
+# narrowband filter, e.g. a UV/IR-cut star-colour session). It sets
+# the session's default folder names (see INPUT FOLDERS above) and,
+# via its channel ("Ha" for a Ha-OIII filter, "SII" for SII-OIII,
+# "RGB" for RGB), the session's output filename. Add or remove
+# entries freely; a session with no light frames is skipped. Two
+# sessions with the same filter (e.g. two Ha-OIII sessions from
+# different nights) have their red channels merged into one combined
+# stack, same as OIII always does across every narrowband session
+# regardless of filter; all RGB sessions likewise merge into one
+# combined RGB stack.
 SESSIONS = [
     {"filter": "Ha-OIII", "lights": None, "darks": None, "flats": None, "biases": None},
     {"filter": "SII-OIII", "lights": None, "darks": None, "flats": None, "biases": None},
@@ -199,11 +225,27 @@ WEIGHT_LABEL_TO_VALUE = {label: value for value, label in STACK_WEIGHT_LABELS.it
 # match unrelated numbers (e.g. "Bin1", "mk127").
 EXPOSURE_RE = re.compile(r"(?:^|[_\-])(\d+(?:\.\d+)?)s", re.IGNORECASE)
 
-# A session's "filter" is the actual dual-band filter it was shot
-# with (shown in the UI and used for default folder names); its red
-# channel is the shorter name used for output filenames/grouping.
-FILTER_TYPES = ("Ha-OIII", "SII-OIII")
-FILTER_TO_CHANNEL = {"Ha-OIII": "Ha", "SII-OIII": "SII"}
+# A session's "filter" is the actual filter it was shot with (shown
+# in the UI and used for default folder names); its channel is the
+# shorter name used for output filenames/grouping - a dual-band
+# filter's red channel, or "RGB" for a plain (UV/IR-cut) colour
+# session, which is stacked in full colour instead of extracted.
+FILTER_TYPES = ("Ha-OIII", "SII-OIII", "RGB")
+FILTER_TO_CHANNEL = {"Ha-OIII": "Ha", "SII-OIII": "SII", "RGB": "RGB"}
+RGB_CHANNEL = "RGB"
+
+# Frame kinds a GUI session collects files for, in display order,
+# with their button/list labels and list colours.
+FRAME_KINDS = {"lights": "Lights", "darks": "Darks", "flats": "Flats", "biases": "Biases"}
+FRAME_KIND_COLOURS = {"lights": "#2e7d32", "darks": "#1565c0", "flats": "#b26a00", "biases": "#6a1b9a"}
+
+# File dialog filter: FITS/XISF/TIFF plus common camera raw formats
+# (everything Siril's convert reads).
+IMAGE_FILETYPES = [
+    ("Image files", "*.fit *.fits *.fts *.fz *.xisf *.tif *.tiff "
+                    "*.cr2 *.cr3 *.crw *.nef *.arw *.dng *.raf *.orf *.rw2 *.pef"),
+    ("All files", "*.*"),
+]
 
 
 def resolve_dir(value, root, name):
@@ -254,6 +296,33 @@ def list_light_files(directory):
 
 def has_files(directory):
     return bool(list_light_files(directory))
+
+
+def stage_files(files, dest_dir):
+    """
+    Put files (picked from anywhere) into dest_dir under their own
+    names, so the folder-based pipeline can treat them as one
+    folder. Hard links where possible (instant, no extra disk space,
+    no admin rights needed on Windows unlike symlinks), copies
+    otherwise (e.g. a file on another drive). Two picked files
+    sharing a name get a "_<n>" suffix. Returns the number copied.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+
+    for src in files:
+        dest = dest_dir / src.name
+        n = 1
+        while dest.exists():
+            dest = dest_dir / f"{src.stem}_{n}{src.suffix}"
+            n += 1
+        try:
+            os.link(src, dest)
+        except OSError:
+            shutil.copy2(src, dest)
+            copied += 1
+
+    return copied
 
 
 def parse_exposure_seconds(stem):
@@ -336,6 +405,13 @@ def prompt_settings(root):
     outer = ttk.Frame(win, padding=10)
     outer.grid(sticky="nsew")
 
+    # Let the session editor (and its file list) take up any extra
+    # room when the window is resized.
+    win.columnconfigure(0, weight=1)
+    win.rowconfigure(0, weight=1)
+    outer.columnconfigure(1, weight=1)
+    outer.rowconfigure(1, weight=1)
+
     # Fixed wraplength wide enough to span the window's actual content
     # width (set by the wider entry/combobox rows below). A dynamic,
     # resize-driven wraplength was tried and removed: since this window
@@ -350,7 +426,9 @@ def prompt_settings(root):
              "into separate Ha, SII and OIII stacks. Your camera's "
              "sensor splits colors in a checkerboard pattern, so the "
              "red channel starts at half resolution - this script "
-             "drizzles it back up to full size.",
+             "drizzles it back up to full size. Optional RGB sessions "
+             "(no narrowband filter, e.g. for star colour) are stacked "
+             "in full colour and aligned with the narrowband stacks.",
         wraplength=WRAP, justify="left"
     )
     intro_label.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 10))
@@ -362,39 +440,33 @@ def prompt_settings(root):
     weight_var = tk.StringVar(value=STACK_WEIGHT_LABELS[STACK_WEIGHT])
 
     # --------------------------------------------------------
-    # Session state: one dict of Tk variables per session. The
-    # editor panel's widgets get their textvariable/variable REBOUND
-    # to the selected session's vars on each selection change, and
-    # every widget command looks the current session up dynamically
-    # (via cur()) rather than closing over a specific var, so it
+    # Session state: one dict per session - its filter (a Tk var)
+    # and the files picked for each frame kind (plain lists of
+    # Paths). Sessions start empty: frames are added explicitly via
+    # the "Add ..." buttons rather than guessed from folder names.
+    # Every widget command looks the current session up dynamically
+    # (via cur()) rather than closing over a specific session, so it
     # always acts on whichever session is selected at click-time.
     # --------------------------------------------------------
 
     sessions = []
     current = {"index": 0}
 
+    # Where the next file dialog opens: Siril's working directory at
+    # first, then wherever files were last picked from (lights,
+    # darks, flats and biases usually live side by side).
+    last_dir = {"path": str(root)}
+
     def cur():
         return sessions[current["index"]]
 
-    def make_session_vars(filter_type, lights_d, darks_d, flats_d, biases_d):
+    def make_session(filter_type):
         return {
             "filter_var": tk.StringVar(value=filter_type),
-            "lights_var": tk.StringVar(value=str(lights_d)),
-            "darks_var": tk.StringVar(value=str(darks_d)),
-            "darks_enabled": tk.BooleanVar(value=has_files(darks_d)),
-            "flats_var": tk.StringVar(value=str(flats_d)),
-            "flats_enabled": tk.BooleanVar(value=has_files(flats_d)),
-            "biases_var": tk.StringVar(value=str(biases_d)),
-            "biases_enabled": tk.BooleanVar(value=has_files(biases_d)),
+            "files": {kind: [] for kind in FRAME_KINDS},
         }
 
-    for entry in SESSIONS:
-        filter_type = entry.get("filter") or FILTER_TYPES[0]
-        dirs = default_session_dirs(root, filter_type, entry)
-        sessions.append(make_session_vars(filter_type, *dirs))
-
-    if not sessions:
-        sessions.append(make_session_vars(FILTER_TYPES[0], *default_session_dirs(root, FILTER_TYPES[0], {})))
+    sessions.append(make_session(FILTER_TYPES[0]))
 
     # --------------------------------------------------------
     # Left: session list + add/remove
@@ -411,9 +483,7 @@ def prompt_settings(root):
     def describe(index):
         sv = sessions[index]
         filter_type = sv["filter_var"].get() or FILTER_TYPES[0]
-        lights_text = sv["lights_var"].get()
-        n = len(list_light_files(Path(lights_text))) if lights_text else 0
-        return f"{index + 1}: {filter_type} ({n} lights)"
+        return f"{index + 1}: {filter_type} ({len(sv['files']['lights'])} lights)"
 
     def refresh_listbox(select_index=None):
         listbox.delete(0, "end")
@@ -426,9 +496,8 @@ def prompt_settings(root):
         select_session(target)
 
     def add_session():
-        filter_type = FILTER_TYPES[0]
-        sv = make_session_vars(filter_type, *default_session_dirs(root, filter_type, {}))
-        sv["filter_var"].trace_add("write", on_label_change)
+        sv = make_session(FILTER_TYPES[0])
+        sv["filter_var"].trace_add("write", refresh_current_row)
         sessions.append(sv)
         refresh_listbox(select_index=len(sessions) - 1)
 
@@ -444,87 +513,134 @@ def prompt_settings(root):
     ttk.Button(left, text="− Remove Session", command=remove_session).grid(row=2, column=1, sticky="we")
 
     # --------------------------------------------------------
-    # Right: editor panel for the currently selected session
+    # Right: editor panel for the currently selected session - a
+    # filter picker, one "Add ..." button per frame kind, and a list
+    # of every file picked so far (name and folder in separate
+    # columns, full path of the selected row shown underneath, so
+    # long paths stay readable).
     # --------------------------------------------------------
 
-    editor = ttk.Labelframe(outer, text="Session", padding=8)
+    editor = ttk.Labelframe(outer, text="Session 1", padding=8)
     editor.grid(row=1, column=1, sticky="nsew")
+    editor.columnconfigure(1, weight=1)
+    editor.rowconfigure(3, weight=1)
 
-    def set_state(widget, enabled):
-        widget.state(["!disabled"] if enabled else ["disabled"])
-
-    erow = 0
-
-    ttk.Label(editor, text="Filter type:").grid(row=erow, column=0, sticky="w", pady=(0, 8))
+    ttk.Label(editor, text="Filter type:").grid(row=0, column=0, sticky="w")
     filter_combo = ttk.Combobox(editor, values=list(FILTER_TYPES), width=17, state="readonly")
-    filter_combo.grid(row=erow, column=1, sticky="w", pady=(0, 8))
-    erow += 1
+    filter_combo.grid(row=0, column=1, sticky="w")
 
-    def browse_into(var):
-        # Only start from the field's current value if it's a real,
-        # existing folder (it's usually still a not-yet-created
-        # default like ".../lights_haoiii") - otherwise start from
-        # Siril's working directory (its "home").
-        existing = var.get()
-        start = existing if existing and Path(existing).is_dir() else str(root)
-        path = filedialog.askdirectory(initialdir=start)
-        if path:
-            var.set(path)
-            refresh_listbox()
+    def add_files(kind):
+        picked = filedialog.askopenfilenames(
+            parent=win,
+            title=f"Select {FRAME_KINDS[kind].lower()} frames",
+            initialdir=last_dir["path"],
+            filetypes=IMAGE_FILETYPES,
+        )
+        if not picked:
+            return
+        last_dir["path"] = str(Path(picked[0]).parent)
+        files = cur()["files"][kind]
+        known = set(files)
+        files.extend(p for p in map(Path, picked) if p not in known)
+        refresh_files()
+        refresh_current_row()
 
-    def folder_row(row_label, var_key, enabled_key=None):
-        nonlocal erow
-        this_row = erow
+    add_bar = ttk.Frame(editor)
+    add_bar.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 4))
 
-        if enabled_key is not None:
-            cb = ttk.Checkbutton(
-                editor, text=row_label,
-                command=lambda: apply_editor_states()
-            )
-            cb.grid(row=this_row, column=0, sticky="w")
+    for kind, kind_label in FRAME_KINDS.items():
+        ttk.Button(
+            add_bar, text=f"Add {kind_label}...", command=lambda k=kind: add_files(k)
+        ).pack(side="left", padx=(0, 4))
+
+    summary_var = tk.StringVar()
+    ttk.Label(editor, textvariable=summary_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 4))
+
+    list_frame = ttk.Frame(editor)
+    list_frame.grid(row=3, column=0, columnspan=2, sticky="nsew")
+    list_frame.columnconfigure(0, weight=1)
+    list_frame.rowconfigure(0, weight=1)
+
+    tree = ttk.Treeview(
+        list_frame, columns=("kind", "name", "folder"), show="headings",
+        height=12, selectmode="extended"
+    )
+    for column, heading, width in (("kind", "Type", 60), ("name", "File", 260), ("folder", "Folder", 300)):
+        tree.heading(column, text=heading, anchor="w")
+        tree.column(column, width=width, minwidth=width, anchor="w", stretch=(column == "folder"))
+    for kind, colour in FRAME_KIND_COLOURS.items():
+        tree.tag_configure(kind, foreground=colour)
+
+    yscroll = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+    xscroll = ttk.Scrollbar(list_frame, orient="horizontal", command=tree.xview)
+    tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+    tree.grid(row=0, column=0, sticky="nsew")
+    yscroll.grid(row=0, column=1, sticky="ns")
+    xscroll.grid(row=1, column=0, sticky="we")
+
+    path_var = tk.StringVar()
+    ttk.Label(
+        editor, textvariable=path_var, style="Note.TLabel", wraplength=WRAP, justify="left"
+    ).grid(row=4, column=0, columnspan=2, sticky="we", pady=(4, 0))
+
+    def tree_item(iid):
+        # Row ids are "<kind>:<index into that kind's file list>".
+        kind, index = iid.split(":")
+        return kind, int(index)
+
+    def refresh_files():
+        tree.delete(*tree.get_children())
+        files = cur()["files"]
+        for kind, kind_label in FRAME_KINDS.items():
+            for i, path in enumerate(files[kind]):
+                tree.insert(
+                    "", "end", iid=f"{kind}:{i}",
+                    values=(kind_label, path.name, str(path.parent)), tags=(kind,)
+                )
+        summary_var.set("    ".join(
+            f"{kind_label}: {len(files[kind])}" for kind, kind_label in FRAME_KINDS.items()
+        ))
+        path_var.set("")
+
+    def on_tree_select(_event):
+        selection = tree.selection()
+        if selection:
+            kind, index = tree_item(selection[0])
+            path_var.set(str(cur()["files"][kind][index]))
         else:
-            cb = None
-            ttk.Label(editor, text=f"{row_label}:").grid(row=this_row, column=0, sticky="w")
+            path_var.set("")
 
-        entry = ttk.Entry(editor, width=42)
-        entry.grid(row=this_row, column=1, sticky="we")
+    tree.bind("<<TreeviewSelect>>", on_tree_select)
 
-        btn = ttk.Button(editor, text="Browse...", command=lambda: browse_into(cur()[var_key]))
-        btn.grid(row=this_row, column=2)
+    def remove_selected():
+        files = cur()["files"]
+        doomed = {}
+        for iid in tree.selection():
+            kind, index = tree_item(iid)
+            doomed.setdefault(kind, set()).add(index)
+        for kind, indices in doomed.items():
+            files[kind] = [p for i, p in enumerate(files[kind]) if i not in indices]
+        refresh_files()
+        refresh_current_row()
 
-        erow += 1
-        return cb, entry, btn
+    def clear_files():
+        for kind in FRAME_KINDS:
+            cur()["files"][kind] = []
+        refresh_files()
+        refresh_current_row()
 
-    lights_cb, lights_entry, lights_btn = folder_row("Lights", "lights_var")
-    darks_cb, darks_entry, darks_btn = folder_row("Darks", "darks_var", "darks_enabled")
-    flats_cb, flats_entry, flats_btn = folder_row("Flats", "flats_var", "flats_enabled")
-    biases_cb, biases_entry, biases_btn = folder_row("Biases", "biases_var", "biases_enabled")
+    tree.bind("<Delete>", lambda _event: remove_selected())
 
-    def apply_editor_states():
-        sv = cur()
-        for cb, entry, btn, enabled_key in (
-            (darks_cb, darks_entry, darks_btn, "darks_enabled"),
-            (flats_cb, flats_entry, flats_btn, "flats_enabled"),
-            (biases_cb, biases_entry, biases_btn, "biases_enabled"),
-        ):
-            enabled = sv[enabled_key].get()
-            set_state(entry, enabled)
-            set_state(btn, enabled)
+    remove_bar = ttk.Frame(editor)
+    remove_bar.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
+    ttk.Button(remove_bar, text="Remove Selected", command=remove_selected).pack(side="left", padx=(0, 4))
+    ttk.Button(remove_bar, text="Clear All", command=clear_files).pack(side="left")
 
     def select_session(index):
         current["index"] = index
-        sv = sessions[index]
-
-        filter_combo.configure(textvariable=sv["filter_var"])
-        lights_entry.configure(textvariable=sv["lights_var"])
-        darks_entry.configure(textvariable=sv["darks_var"])
-        darks_cb.configure(variable=sv["darks_enabled"])
-        flats_entry.configure(textvariable=sv["flats_var"])
-        flats_cb.configure(variable=sv["flats_enabled"])
-        biases_entry.configure(textvariable=sv["biases_var"])
-        biases_cb.configure(variable=sv["biases_enabled"])
-
-        apply_editor_states()
+        editor.configure(text=f"Session {index + 1}")
+        filter_combo.configure(textvariable=sessions[index]["filter_var"])
+        refresh_files()
 
     def on_listbox_select(_event):
         sel = listbox.curselection()
@@ -533,19 +649,18 @@ def prompt_settings(root):
 
     listbox.bind("<<ListboxSelect>>", on_listbox_select)
 
-    def on_label_change(*_args):
-        idx = listbox.curselection()
-        if idx:
-            listbox.delete(idx[0])
-            listbox.insert(idx[0], describe(idx[0]))
-            listbox.selection_set(idx[0])
+    def refresh_current_row(*_args):
+        # Re-describe the selected session's listbox row (filter or
+        # lights count changed) without disturbing the selection.
+        idx = current["index"]
+        listbox.delete(idx)
+        listbox.insert(idx, describe(idx))
+        listbox.selection_set(idx)
 
     refresh_listbox(select_index=0)
 
-    # Re-describe the listbox row when the filter type changes, so it
-    # doesn't go stale while editing.
     for sv in sessions:
-        sv["filter_var"].trace_add("write", on_label_change)
+        sv["filter_var"].trace_add("write", refresh_current_row)
 
     # --------------------------------------------------------
     # Shared options
@@ -625,24 +740,35 @@ def prompt_settings(root):
             messagebox.showerror("Error", "Drizzle pixel fraction must be between 0 (exclusive) and 1.0.")
             return
 
-        resolved = []
-        for sv in sessions:
-            filter_type = sv["filter_var"].get().strip() or FILTER_TYPES[0]
-            lights_text = sv["lights_var"].get().strip()
-            lights = Path(lights_text) if lights_text else None
-            if lights is not None and has_files(lights):
-                resolved.append({
-                    "filter": filter_type,
-                    "lights": lights,
-                    "darks": Path(sv["darks_var"].get().strip()) if sv["darks_enabled"].get() and sv["darks_var"].get().strip() else None,
-                    "flats": Path(sv["flats_var"].get().strip()) if sv["flats_enabled"].get() and sv["flats_var"].get().strip() else None,
-                    "biases": Path(sv["biases_var"].get().strip()) if sv["biases_enabled"].get() and sv["biases_var"].get().strip() else None,
-                })
+        for i, sv in enumerate(sessions):
+            if not sv["files"]["lights"] and any(sv["files"].values()):
+                messagebox.showerror(
+                    "Error",
+                    f"Session {i + 1} has calibration frames but no lights - "
+                    "add its lights or remove the session."
+                )
+                return
+
+        resolved = [
+            {
+                "filter": sv["filter_var"].get().strip() or FILTER_TYPES[0],
+                "files": {kind: list(files) for kind, files in sv["files"].items()},
+            }
+            for sv in sessions if sv["files"]["lights"]
+        ]
 
         if not resolved:
             messagebox.showerror(
                 "Error",
-                "At least one session needs a valid, non-empty Lights folder."
+                "Add light frames to at least one session."
+            )
+            return
+
+        if all(entry["filter"] == RGB_CHANNEL for entry in resolved):
+            messagebox.showerror(
+                "Error",
+                "At least one Ha-OIII or SII-OIII session is required - "
+                "RGB sessions are only aligned to the narrowband stacks."
             )
             return
 
@@ -795,6 +921,40 @@ def main():
                 return str(path)
 
         # ----------------------------------------------------
+        # GUI sessions are lists of picked files (from anywhere)
+        # rather than folders: stage each session's files into its
+        # own per-kind folder under _nb_input, so the folder-based
+        # pipeline below applies unchanged. Rebuilt from scratch on
+        # every run - it only ever holds links/copies of the picks.
+        # ----------------------------------------------------
+
+        staging = root / "_nb_input"
+
+        if any("files" in entry for entry in session_settings):
+
+            if staging.exists():
+                shutil.rmtree(staging)
+
+            copied = 0
+
+            for i, entry in enumerate(session_settings):
+                session_staging = staging / f"{i}_{slugify(entry['filter'])}"
+                for kind in FRAME_KINDS:
+                    files = entry["files"][kind]
+                    if files:
+                        copied += stage_files(files, session_staging / kind)
+                        entry[kind] = session_staging / kind
+                    else:
+                        entry[kind] = None
+
+            if copied:
+                log(
+                    f"Copied {copied} input file(s) into {staging.name} - they're "
+                    "on a different drive than the working folder, so they "
+                    "couldn't be hard-linked."
+                )
+
+        # ----------------------------------------------------
         # Which sessions are active? Build a unique key per session
         # (index + filter slug, so two sessions sharing a filter
         # don't collide on disk), and derive each session's red
@@ -818,6 +978,12 @@ def main():
             raise RuntimeError(
                 "No light frames found. Provide a non-empty lights "
                 "folder for at least one session."
+            )
+
+        if all(session["label"] == RGB_CHANNEL for session in sessions):
+            raise RuntimeError(
+                "At least one Ha-OIII or SII-OIII session is required - "
+                "RGB sessions are only aligned to the narrowband stacks."
             )
 
         log("==========================================")
@@ -894,9 +1060,11 @@ def main():
             has_darks = has_files(darks_dir)
             has_flats = has_files(flats_dir)
 
-            def convert_frames(kind, frames_dir):
+            is_rgb = label == RGB_CHANNEL
+
+            def convert_frames(kind, frames_dir, *extra_args):
                 cd(frames_dir)
-                cmd("convert", kind, f"-out={rel(session_process)}")
+                cmd("convert", kind, f"-out={rel(session_process)}", *extra_args)
                 cd(session_process)
 
             def single_frame(sequence):
@@ -969,8 +1137,17 @@ def main():
 
             # ---- LIGHTS: convert + calibrate ----
 
+            has_calibration = has_biases or has_darks or has_flats
+
             log(f"[{label}] Converting lights...")
-            convert_frames("light", lights_dir)
+            # An RGB session's lights must end up debayered. Calibration
+            # needs the raw CFA data, so with masters available the
+            # debayer happens in calibrate (-debayer) below; without
+            # any, convert debayers directly.
+            if is_rgb and not has_calibration:
+                convert_frames("light", lights_dir, "-debayer")
+            else:
+                convert_frames("light", lights_dir)
 
             calibration_args = []
 
@@ -1000,7 +1177,10 @@ def main():
 
             calibration_args.append("-cfa")
 
-            if has_biases or has_darks or has_flats:
+            if is_rgb:
+                calibration_args.append("-debayer")
+
+            if has_calibration:
 
                 methods = []
                 if has_darks:
@@ -1021,6 +1201,14 @@ def main():
                 log(f"[{label}] No calibration frames found -> using converted lights directly.")
 
                 light_sequence = "light"
+
+            if is_rgb:
+                # Kept in full colour - no channel extraction.
+                return {
+                    "light_files": list_light_files(lights_dir),
+                    "process_dir": session_process,
+                    "rgb_sequence": light_sequence,
+                }
 
             # ---- EXTRACT red channel + OIII ----
 
@@ -1059,9 +1247,18 @@ def main():
         # ----------------------------------------------------
 
         groups = {}
+        rgb_keys = []
 
         for session in sessions:
-            groups.setdefault(session["label"], []).append(session["key"])
+            if session["label"] == RGB_CHANNEL:
+                rgb_keys.append(session["key"])
+            else:
+                groups.setdefault(session["label"], []).append(session["key"])
+
+        narrowband_infos = [
+            results_by_key[session["key"]] for session in sessions
+            if session["label"] != RGB_CHANNEL
+        ]
 
         channel_results = {}
 
@@ -1121,10 +1318,45 @@ def main():
                 "red_final_path": red_dir / "red_final.fit",
             }
 
+        def stack_full_res(label, sequence, out_name):
+            """
+            Register + stack an already full-resolution sequence (in
+            Siril's current directory) once: plain registration at
+            SCALE = 1, true drizzle by SCALE otherwise. Shared by the
+            combined OIII and combined RGB stacks.
+            """
+            log(f"Calculating combined {label} registration...")
+            cmd("register", sequence, "-2pass")
+
+            if scale_is_one:
+                log(f"SCALE = 1 -> applying normal {label} registration.")
+                cmd("seqapplyreg", sequence, "-interp=lanczos4", "-framing=min")
+            else:
+                log(f"Applying true {scale:g}x drizzle to {label}...")
+                cmd(
+                    "seqapplyreg", sequence,
+                    f"-scale={scale:g}", "-drizzle",
+                    f"-pixfrac={pixfrac}", f"-kernel={KERNEL}",
+                    "-framing=min"
+                )
+
+            log(f"Stacking combined {label}...")
+            cmd(
+                "stack", f"r_{sequence}",
+                "rej", "3", "3",
+                "-norm=addscale",
+                *stack_weight_args,
+                "-output_norm", "-32b",
+                f"-out={out_name}"
+            )
+
+            cmd("mirrorx_single", out_name)
+
         # ----------------------------------------------------
-        # Combine OIII across every session into one sequence and
-        # stack it once - this is what gives the deeper/better SNR
-        # combined OIII master when multiple sessions are provided.
+        # Combine OIII across every narrowband session into one
+        # sequence and stack it once - this is what gives the
+        # deeper/better SNR combined OIII master when multiple
+        # sessions are provided.
         # ----------------------------------------------------
 
         log("------------------------------------------")
@@ -1132,46 +1364,54 @@ def main():
         log("------------------------------------------")
 
         oiii_dir = process / "oiii_combined"
-        oiii_sources = [(info["process_dir"], info["oiii_sequence"]) for info in results_by_key.values()]
+        oiii_sources = [(info["process_dir"], info["oiii_sequence"]) for info in narrowband_infos]
         frame_idx = merge_sequence_files(oiii_sources, oiii_dir, "oiii_all")
-        oiii_light_files_all = [f for info in results_by_key.values() for f in info["light_files"]]
+        oiii_light_files_all = [f for info in narrowband_infos for f in info["light_files"]]
 
         log(f"Combined OIII frame count: {frame_idx}")
 
         cd(oiii_dir)
-
-        log("Calculating combined OIII registration...")
-        cmd("register", "oiii_all", "-2pass")
-
-        if scale_is_one:
-            log("SCALE = 1 -> applying normal OIII registration.")
-            cmd("seqapplyreg", "oiii_all", "-interp=lanczos4", "-framing=min")
-        else:
-            log(f"Applying true {scale:g}x drizzle to OIII...")
-            cmd(
-                "seqapplyreg", "oiii_all",
-                f"-scale={scale:g}", "-drizzle",
-                f"-pixfrac={pixfrac}", f"-kernel={KERNEL}",
-                "-framing=min"
-            )
-
-        log("Stacking combined OIII...")
-        cmd(
-            "stack", "r_oiii_all",
-            "rej", "3", "3",
-            "-norm=addscale",
-            *stack_weight_args,
-            "-output_norm", "-32b",
-            "-out=oiii_native"
-        )
-
-        cmd("mirrorx_single", "oiii_native")
+        stack_full_res("OIII", "oiii_all", "oiii_native")
 
         oiii_final_path = oiii_dir / "oiii_native.fit"
 
         # ----------------------------------------------------
+        # Combine every RGB session (if any) into one full-colour
+        # stack the same way, then split it into R/G/B mono files:
+        # the cross-channel alignment below registers one Siril
+        # sequence, which can't mix colour and mono images, so the
+        # three planes are aligned as separate members and
+        # recombined afterwards.
+        # ----------------------------------------------------
+
+        rgb_light_files_all = []
+        rgb_plane_paths = []
+
+        if rgb_keys:
+
+            log("------------------------------------------")
+            log(f"Combining RGB from {len(rgb_keys)} session(s)")
+            log("------------------------------------------")
+
+            rgb_infos = [results_by_key[k] for k in rgb_keys]
+            rgb_dir = process / "rgb_combined"
+            rgb_sources = [(info["process_dir"], info["rgb_sequence"]) for info in rgb_infos]
+            count = merge_sequence_files(rgb_sources, rgb_dir, "rgb_all")
+            rgb_light_files_all = [f for info in rgb_infos for f in info["light_files"]]
+
+            log(f"Combined RGB frame count: {count}")
+
+            cd(rgb_dir)
+            stack_full_res("RGB", "rgb_all", "rgb_native")
+
+            cmd("load", "rgb_native")
+            cmd("split", "rgb_r", "rgb_g", "rgb_b")
+            rgb_plane_paths = [rgb_dir / f"rgb_{c}.fit" for c in "rgb"]
+
+        # ----------------------------------------------------
         # Align every final channel (one per unique label + combined
-        # OIII) together on one shared pixel grid.
+        # OIII + the combined RGB stack's three planes, if any)
+        # together on one shared pixel grid.
         # ----------------------------------------------------
 
         log("------------------------------------------")
@@ -1195,6 +1435,13 @@ def main():
         idx += 1
         oiii_idx = idx
         shutil.move(str(oiii_final_path), str(final_dir / f"final_{idx:05d}.fit"))
+
+        rgb_plane_indices = []
+
+        for plane_path in rgb_plane_paths:
+            idx += 1
+            rgb_plane_indices.append(idx)
+            shutil.move(str(plane_path), str(final_dir / f"final_{idx:05d}.fit"))
 
         cd(final_dir)
 
@@ -1266,6 +1513,18 @@ def main():
             output_names[label] = name
             save_channel(idx, is_reference=(label == reference_label), out_path=results / name)
 
+        # The RGB stack is never background-matched (shifting each
+        # plane to a narrowband channel's median would wreck its
+        # colour balance) - its aligned planes are just recombined.
+        if rgb_plane_indices:
+            rgb_name = f"{derive_base_name_from_files(rgb_light_files_all)}_{RGB_CHANNEL}_x{scale_tag}"
+            output_names[RGB_CHANNEL] = rgb_name
+            cmd(
+                "rgbcomp",
+                *(f"r_final_{i:05d}" for i in rgb_plane_indices),
+                f"-out={rel(results / rgb_name)}"
+            )
+
         # ====================================================
         # DONE
         # ====================================================
@@ -1286,6 +1545,9 @@ def main():
 
             if masters.exists():
                 shutil.rmtree(masters)
+
+            if staging.exists():
+                shutil.rmtree(staging)
 
         log("==========================================")
         log("Finished successfully")

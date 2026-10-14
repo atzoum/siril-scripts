@@ -8,7 +8,9 @@ OSC dual-band narrowband preprocessing for a fixed Ha-OIII and/or SII-OIII filte
 
 ## OSC_Narrowband_Multisession_Preprocess.py
 
-Same pipeline, generalized to an arbitrary number of sessions instead of a fixed Ha/SII pair - add or remove sessions freely, each labeled with its own red-channel line (Ha, SII, or a custom name). The GUI manages sessions as a dynamic list (add/remove, per-session lights/darks/flats/biases). Every session's OIII is still merged and stacked once across all sessions for a deeper combined master.
+Same pipeline, generalized to an arbitrary number of sessions instead of a fixed Ha/SII pair - add or remove sessions freely, each tagged with the filter it was shot with (Ha-OIII or SII-OIII). The GUI manages sessions as a dynamic list: add/remove sessions, and pick each session's lights/darks/flats/biases as files from any folder with "Add Lights/Darks/Flats/Biases" buttons (listed by name and folder, removable individually). Sessions sharing a filter are merged into one stack, and every session's OIII is merged and stacked once across all sessions for a deeper combined master.
+
+Sessions can also be tagged RGB (no narrowband filter, e.g. for star colour). These are debayered and stacked in full colour instead of channel-split, and the result is aligned on the same pixel grid as the narrowband stacks so it superimposes directly.
 
 Session concept and UI approach adapted from [Naztronomy's OSC preprocessing script](https://github.com/naztronaut/siril-scripts), reimplemented in plain tkinter (no extra dependencies) instead of PyQt6.
 
